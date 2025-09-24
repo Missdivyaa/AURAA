@@ -149,12 +149,13 @@ export default function HealthOverview({ familyMembers }: HealthOverviewProps) {
           {overviewCards.map((card, index) => {
             const Icon = card.icon
             return (
-              <motion.div
+              <motion.a
                 key={card.title}
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.6, delay: index * 0.1 }}
-                className={`${card.bgColor} p-6 rounded-xl hover:shadow-lg transition-all duration-300 card-hover group`}
+                href={card.title === 'Total Medications' ? '/medications' : undefined}
+                className={`${card.bgColor} p-6 rounded-xl hover:shadow-lg transition-all duration-300 card-hover group ${card.title === 'Total Medications' ? 'cursor-pointer' : ''}`}
               >
                 <div className="space-y-4">
                   <div className="flex items-center justify-between">
@@ -177,7 +178,7 @@ export default function HealthOverview({ familyMembers }: HealthOverviewProps) {
                     </div>
                   </div>
                 </div>
-              </motion.div>
+              </motion.a>
             )
           })}
         </div>
@@ -225,7 +226,9 @@ export default function HealthOverview({ familyMembers }: HealthOverviewProps) {
                   {member.medications > 0 && (
                     <>
                       <span className="text-sm text-gray-600">•</span>
-                      <span className="text-sm text-gray-600">{member.medications} medications</span>
+                      <a href={`/medications?memberId=${member.id}`} className="text-sm text-primary-700 hover:underline">
+                        {member.medications} medications
+                      </a>
                     </>
                   )}
                 </div>

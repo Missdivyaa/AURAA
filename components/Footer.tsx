@@ -20,6 +20,7 @@ export default function Footer() {
     product: [
       { name: 'Features', href: '/features' },
       { name: 'AI Insights', href: '/ai-insights' },
+      { name: 'Medications', href: '/medications' },
       { name: 'Family Dashboard', href: '/dashboard' },
       { name: 'Emergency ID', href: '/emergency-id' },
       { name: 'Wearable Integration', href: '/wearables' },

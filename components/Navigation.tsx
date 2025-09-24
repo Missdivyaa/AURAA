@@ -15,7 +15,8 @@ import {
   QrCode,
   Settings,
   LogIn,
-  UserPlus
+  UserPlus,
+  Pill
 } from 'lucide-react'
 
 export default function Navigation() {
