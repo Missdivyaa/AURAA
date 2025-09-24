@@ -85,7 +85,23 @@ class AIAnalysisService {
     'prescription','diagnosis','patient','doctor','hospital','mg/dl','mmhg',
     'vitamin','thyroid','tsh','t4','dosage','tablet','capsule','x-ray','mri','ct',
     'ultrasound','report','scan','lab','urine','serum','disease','hypertension',
-    'diabetes','metformin','lisinopril','antibiotic','bp','pulse','appointment'
+    'diabetes','metformin','lisinopril','antibiotic','bp','pulse','appointment',
+    // Added detailed CBC + lipid + differential terms
+    'hct','mcv','mch','mchc','rdw-cv','neutrophils','lymphocytes','monocytes','eosinophils','basophils',
+    'absolute neutrophil count','absolute lymphocyte count','absolute monocyte count','absolute eosinophil count','absolute basophil count',
+    'platelet count','lipid profile','triglycerides','hdl','ldl','vldl','non hdl cholesterol','ratio','hb a1c','hba1c',
+    'fasting plasma glucose','postprandial','diagnosis','reference','bio ref interval','method'
+  ]
+
+  // Regex patterns that indicate medical content (units, formats)
+  private medicalPatterns: RegExp[] = [
+    /\b(\d{1,3}(\.\d{1,2})?)\s*(mg\/dl|g\/dl|mmhg|miu\/l|ng\/ml|iu\/l|mmol\/l)\b/gi,
+    /\b(hb|hba1c|hdl|ldl|tsh|t3|t4|crp|sgpt|sgot|alt|ast|bun|creatinine)\b/i,
+    /\b(urine\s+test|lipid\s+profile|liver\s+function\s+test|thyroid\s+profile|complete\s+blood\s+count|cbc)\b/i,
+    /\b(x[- ]?ray|mri|ct\s+scan|ultrasound|ecg|echo)\b/i,
+    /\b(10\^?\s?\d+\s*\/\s?(?:ul|µl|μl))\b/i,
+    /\b(fL|pg|%)\b/gi,
+    /\b(fasting\s+glucose|post\s*meal|pre[- ]?diabetes|diabetes)\b/i
   ]
 
   // Validate file extension
@@ -95,22 +111,45 @@ class AIAnalysisService {
     return allowed.includes(ext)
   }
 
-  // Score whether OCR text is likely medical
+  // Score whether OCR text is likely medical using unique hits + term density
   scoreMedicalText(text: string): { score: number; matched: string[] } {
     const lower = text.toLowerCase()
-    const matched: string[] = []
-    let hits = 0
+    const words = lower.split(/\s+/).filter(Boolean)
+    const totalWords = Math.max(1, words.length)
+
+    const matchedSet = new Set<string>()
+    let occurrences = 0
     for (const term of this.medicalTerms) {
-      if (lower.includes(term)) {
-        matched.push(term)
-        hits++
+      const safe = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+      const pattern = new RegExp(`(?<![a-z0-9])${safe}(?![a-z0-9])`, 'gi')
+      const found = lower.match(pattern)
+      if (found && found.length > 0) {
+        matchedSet.add(term)
+        occurrences += found.length
       }
     }
-    // Normalize score 0..1 by unique hits / dictionary size, weighted by length
-    const lenWeight = Math.min(1, lower.length / 500) // longer texts are more credible
-    const base = hits / Math.min(this.medicalTerms.length, 40)
-    const score = Math.max(0, Math.min(1, base * 0.8 + lenWeight * 0.2))
-    return { score, matched }
+
+    // Count pattern hits (units, lab abbreviations)
+    let patternHits = 0
+    for (const rx of this.medicalPatterns) {
+      const found = lower.match(rx)
+      if (found) {
+        patternHits += Array.isArray(found) ? found.length : 1
+      }
+    }
+
+    const uniqueHits = matchedSet.size
+    const scoreUnique = uniqueHits / 20 // increase sensitivity for real reports
+    const density = (occurrences + patternHits) / totalWords // fraction of medical indicators
+    const scoreDensity = Math.min(1, density * 8) // amplify density; ~12.5% -> 1.0
+
+    // Weighted blend; density dominates to differentiate real reports from random text
+    let score = Math.max(0, Math.min(1, 0.8 * scoreDensity + 0.2 * scoreUnique))
+    // Boost if many medical unit patterns are present
+    if (patternHits >= 3) {
+      score = Math.max(score, Math.min(1, 0.6 + 0.05 * (patternHits - 2)))
+    }
+    return { score, matched: Array.from(matchedSet) }
   }
 
   // Simulate OCR processing of uploaded files
@@ -120,8 +159,8 @@ class AIAnalysisService {
     // Simulate processing time
     await new Promise(resolve => setTimeout(resolve, 2000))
     
-    // Mock OCR results based on file type
-    const mockResults = this.getMockOCRResult(file.name)
+    // Mock OCR results based on filename heuristics
+    const mockResults = this.getMockOCRResult(file)
     
     return mockResults
   }
@@ -193,7 +232,15 @@ class AIAnalysisService {
   }
 
   // Private helper methods
-  private getMockOCRResult(fileName: string): OCRResult {
+  private getMockOCRResult(file: File): OCRResult {
+    const fileName = file.name
+    const lower = fileName.toLowerCase()
+    const ext = (fileName.split('.').pop() || '').toLowerCase()
+
+    // Heuristics for medical vs non-medical filenames
+    const medicalNameHints = /(blood|cbc|lab|report|medical|prescription|rx|scan|x-?ray|mri|ct|thyroid|tsh|glucose|cholesterol|hospital|doctor|clinic)/i
+    const nonMedicalNameHints = /(semester|result|marks?heet|assignment|invoice|bill|receipt|ticket|travel|photo|image|selfie|wallpaper|music|song|video|movie|party|wedding|holiday)/i
+
     const mockData = {
       'blood_test.pdf': {
         text: 'Complete Blood Count\nHemoglobin: 14.2 g/dL\nWhite Blood Cells: 7,500/μL\nPlatelets: 250,000/μL\nGlucose: 95 mg/dL\nCholesterol: 180 mg/dL\nDr. Sarah Johnson\nCity General Hospital\nDate: 2024-01-15',
@@ -229,18 +276,39 @@ class AIAnalysisService {
       }
     }
 
-    const data = mockData[fileName as keyof typeof mockData] || mockData['blood_test.pdf']
-    
-    return {
-      text: data.text,
-      confidence: 0.92,
-      extractedData: {
-        medications: data.medications,
-        values: data.values,
-        dates: data.dates,
-        doctors: data.doctors,
-        hospitals: data.hospitals
+    // If filename strongly suggests medical, use medical-like mock
+    if (medicalNameHints.test(fileName)) {
+      const data = mockData['blood_test.pdf']
+      return {
+        text: data.text,
+        confidence: 0.92,
+        extractedData: {
+          medications: data.medications,
+          values: data.values,
+          dates: data.dates,
+          doctors: data.doctors,
+          hospitals: data.hospitals
+        }
       }
+    }
+
+    // Non-medical heuristic: images or obvious non-medical names
+    const looksNonMedical = nonMedicalNameHints.test(lower) || file.type.startsWith('image/') || ['zip','rar','7z'].includes(ext)
+    if (looksNonMedical) {
+      const nonMedicalText = 'Semester Result\nCourse: Data Structures\nGrade: A\nCredits: 4\nUniversity Registrar\nThis document lists academic performance and grades. No medical content.'
+      return {
+        text: nonMedicalText,
+        confidence: 0.85,
+        extractedData: { medications: [], values: {}, dates: [], doctors: [], hospitals: [] }
+      }
+    }
+
+    // Neutral fallback: short generic text with minimal hints
+    const genericText = 'Report document\nSummary: General information. Please see attached pages.'
+    return {
+      text: genericText,
+      confidence: 0.6,
+      extractedData: { medications: [], values: {}, dates: [], doctors: [], hospitals: [] }
     }
   }
 
