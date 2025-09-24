@@ -79,6 +79,40 @@ export interface OCRResult {
 }
 
 class AIAnalysisService {
+  // Quick medical term dictionary for scoring (expandable)
+  private medicalTerms: string[] = [
+    'hemoglobin','cholesterol','glucose','cbc','blood','platelets','wbc','rbc',
+    'prescription','diagnosis','patient','doctor','hospital','mg/dl','mmhg',
+    'vitamin','thyroid','tsh','t4','dosage','tablet','capsule','x-ray','mri','ct',
+    'ultrasound','report','scan','lab','urine','serum','disease','hypertension',
+    'diabetes','metformin','lisinopril','antibiotic','bp','pulse','appointment'
+  ]
+
+  // Validate file extension
+  isAllowedExtension(file: File): boolean {
+    const allowed = ['pdf','jpg','jpeg','png','gif','txt','doc','docx']
+    const ext = (file.name.split('.').pop() || '').toLowerCase()
+    return allowed.includes(ext)
+  }
+
+  // Score whether OCR text is likely medical
+  scoreMedicalText(text: string): { score: number; matched: string[] } {
+    const lower = text.toLowerCase()
+    const matched: string[] = []
+    let hits = 0
+    for (const term of this.medicalTerms) {
+      if (lower.includes(term)) {
+        matched.push(term)
+        hits++
+      }
+    }
+    // Normalize score 0..1 by unique hits / dictionary size, weighted by length
+    const lenWeight = Math.min(1, lower.length / 500) // longer texts are more credible
+    const base = hits / Math.min(this.medicalTerms.length, 40)
+    const score = Math.max(0, Math.min(1, base * 0.8 + lenWeight * 0.2))
+    return { score, matched }
+  }
+
   // Simulate OCR processing of uploaded files
   async processDocument(file: File): Promise<OCRResult> {
     console.log(`[AI] Processing document: ${file.name}`)
@@ -100,6 +134,27 @@ class AIAnalysisService {
     await new Promise(resolve => setTimeout(resolve, 1500))
     
     const analysis = this.generateHealthAnalysis(ocrResult)
+    // Try to infer high-level dates
+    const dateMatch = ocrResult.text.match(/(\d{4}[-\/.]\d{1,2}[-\/.]\d{1,2}|\d{1,2}[-\/.]\d{1,2}[-\/.]\d{2,4})/g)
+    if (dateMatch && dateMatch.length) {
+      // Earliest as last checkup, latest as next suggested
+      const parsed = dateMatch.map(d => new Date(d)).filter(d => !isNaN(d.getTime())).sort((a,b)=>a.getTime()-b.getTime())
+      if (parsed.length >= 1) {
+        analysis.recommendations.push({
+          type: 'appointment',
+          title: 'Last checkup detected',
+          description: `Last checkup around ${parsed[0].toISOString().split('T')[0]}`,
+          priority: 'low', timeframe: 'info', confidence: 0.6
+        })
+      }
+      const future = parsed.find(d => d.getTime() > Date.now())
+      if (future) {
+        analysis.appointments.push({
+          doctorName: 'Follow-up', specialty: 'General Medicine', reason: 'Based on report date',
+          urgency: 'low', suggestedDate: future.toISOString().split('T')[0], hospital: 'Clinic', confidence: 0.6
+        })
+      }
+    }
     
     return analysis
   }

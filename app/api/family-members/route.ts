@@ -88,7 +88,10 @@ export async function POST(request: NextRequest) {
     }
 
     // Validate and parse the date
-    const parsedDob = dob ? new Date(dob) : new Date()
+    if (!dob) {
+      throw new Error('Date of birth is required')
+    }
+    const parsedDob = new Date(dob)
     if (isNaN(parsedDob.getTime())) {
       throw new Error('Invalid date format for date of birth')
     }

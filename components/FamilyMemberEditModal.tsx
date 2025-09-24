@@ -37,19 +37,7 @@ interface VitalSign {
   notes?: string
 }
 
-interface FamilyMember {
-  id: string
-  name: string
-  age: number
-  relationship: string
-  avatar: string
-  healthScore: number
-  lastCheckup: string
-  nextAppointment: string
-  medications: number
-  conditions: string[]
-  status: 'excellent' | 'good' | 'fair' | 'poor'
-}
+import { FamilyMember } from '@/lib/client-data-service'
 
 interface FamilyMemberEditModalProps {
   member: FamilyMember
@@ -287,6 +275,7 @@ export default function FamilyMemberEditModal({ member, isOpen, onClose, onSave 
                   <label className="block text-sm font-medium text-gray-700 mb-1">Date of Birth</label>
                   <input
                     type="date"
+                    value={editedMember.dob ? editedMember.dob.split('T')[0] : ''}
                     onChange={(e) => {
                       const value = e.target.value
                       const birth = new Date(value)
@@ -297,7 +286,11 @@ export default function FamilyMemberEditModal({ member, isOpen, onClose, onSave 
                         const m = today.getMonth() - birth.getMonth()
                         if (m < 0 || (m === 0 && today.getDate() < birth.getDate())) computedAge--
                       }
-                      setEditedMember(prev => ({ ...prev, age: Math.max(0, computedAge) }))
+                      setEditedMember(prev => ({ 
+                        ...prev, 
+                        dob: value,
+                        age: Math.max(0, computedAge) 
+                      }))
                     }}
                     className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                   />
@@ -399,7 +392,7 @@ export default function FamilyMemberEditModal({ member, isOpen, onClose, onSave 
                     <Link href={`/medications?memberId=${editedMember.id}`} className="px-3 py-2 text-sm rounded-md border text-gray-700 hover:bg-gray-100">
                       View
                     </Link>
-                    <Link href={`/medications/add?memberId=${editedMember.id}`} className="px-3 py-2 text-sm rounded-md bg-blue-600 text-white hover:bg-blue-700">
+                    <Link href={`/medications?action=create&memberId=${editedMember.id}`} className="px-3 py-2 text-sm rounded-md bg-blue-600 text-white hover:bg-blue-700">
                       Add
                     </Link>
                   </div>

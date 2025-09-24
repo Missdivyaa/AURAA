@@ -23,7 +23,7 @@ export default function QuickActions() {
       color: 'from-blue-500 to-blue-600',
       bgColor: 'bg-blue-50',
       iconColor: 'text-blue-600',
-      href: '/medications/add'
+      href: '/medications?action=create'
     },
     {
       title: 'Schedule Appointment',
@@ -32,7 +32,7 @@ export default function QuickActions() {
       color: 'from-green-500 to-green-600',
       bgColor: 'bg-green-50',
       iconColor: 'text-green-600',
-      href: '/appointments/schedule'
+      href: '/appointments?action=create'
     },
     {
       title: 'Upload Report',

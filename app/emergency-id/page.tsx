@@ -40,6 +40,11 @@ interface FamilyMember {
   nextAppointment: string
   medications: number
   conditions: string[]
+  allergies: string[]
+  emergencyContacts: any
+  insurance: any
+  doctor: any
+  bloodType?: string
   status: 'excellent' | 'good' | 'fair' | 'poor'
 }
 
@@ -80,106 +85,154 @@ export default function EmergencyID() {
 
   useEffect(() => {
     loadFamilyMembers()
-    loadEmergencyData()
   }, [])
+
+  useEffect(() => {
+    if (familyMembers.length > 0) {
+      loadEmergencyData()
+    }
+  }, [familyMembers])
 
   const loadFamilyMembers = async () => {
     try {
-      // Mock family members data
-      const mockMembers: FamilyMember[] = [
-        {
-          id: 'divya-001',
-          name: 'Divya',
-          age: 25,
-          relationship: 'Self',
-          avatar: 'https://ui-avatars.com/api/?name=Divya&background=6366f1&color=fff&size=150',
-          healthScore: 85,
-          lastCheckup: '2024-08-15',
-          nextAppointment: '2024-12-15',
-          medications: 2,
-          conditions: ['Hypertension'],
-          status: 'good'
-        },
-        {
-          id: 'tushar-002',
-          name: 'Tushar',
-          age: 28,
-          relationship: 'Brother',
-          avatar: 'https://ui-avatars.com/api/?name=Tushar&background=10b981&color=fff&size=150',
-          healthScore: 92,
-          lastCheckup: '2024-09-10',
-          nextAppointment: '2025-03-10',
-          medications: 0,
-          conditions: [],
-          status: 'excellent'
+      // Load real family members from backend
+      const response = await fetch('/api/family-members?userId=demo-user-123')
+      if (response.ok) {
+        const membersData = await response.json()
+        console.log('🏥 Emergency ID: Loaded family members:', membersData)
+        
+        // Convert backend data to frontend format
+        const formattedMembers: FamilyMember[] = membersData.map((member: any) => ({
+          id: member.id,
+          name: member.name,
+          age: calculateAge(member.dob),
+          relationship: member.relationship,
+          avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(member.name)}&background=random`,
+          healthScore: calculateHealthScore(member),
+          lastCheckup: new Date(member.createdAt).toISOString(),
+          nextAppointment: member.nextAppointment || '',
+          medications: Array.isArray(member.medications) ? member.medications.length : 0,
+          conditions: Array.isArray(member.conditions) ? member.conditions : [],
+          allergies: Array.isArray(member.allergies) ? member.allergies : [],
+          emergencyContacts: member.emergencyContacts || {},
+          insurance: member.insurance || {},
+          doctor: member.doctor || {},
+          bloodType: member.bloodType || 'Unknown',
+          status: 'good' as const
+        }))
+        
+        setFamilyMembers(formattedMembers)
+        if (formattedMembers.length > 0) {
+          setSelectedMember(formattedMembers[0].id)
         }
-      ]
-      setFamilyMembers(mockMembers)
-      if (mockMembers.length > 0) {
-        setSelectedMember(mockMembers[0].id)
+      } else {
+        console.error('Failed to load family members from backend')
+        setFamilyMembers([])
       }
     } catch (error) {
       console.error('Error loading family members:', error)
+      setFamilyMembers([])
     }
+  }
+
+  // Helper function to calculate age
+  const calculateAge = (dob: string | Date | undefined): number => {
+    if (!dob) return 0
+    const birth = new Date(dob)
+    if (isNaN(birth.getTime())) return 0
+    const today = new Date()
+    let age = today.getFullYear() - birth.getFullYear()
+    const m = today.getMonth() - birth.getMonth()
+    if (m < 0 || (m === 0 && today.getDate() < birth.getDate())) age--
+    return Math.max(0, age)
+  }
+
+  // Helper function to calculate health score
+  const calculateHealthScore = (member: any): number => {
+    const age = calculateAge(member.dob)
+    const conditionsCount = Array.isArray(member.conditions) ? member.conditions.length : 0
+    let score = 100
+    if (age >= 65) score -= 20
+    else if (age >= 50) score -= 15
+    else if (age >= 35) score -= 10
+    else if (age >= 18) score -= 5
+    score -= conditionsCount * 8
+    return Math.max(0, Math.min(100, score))
   }
 
   const loadEmergencyData = async () => {
     try {
       setLoading(true)
       
-      // Mock emergency data
-      const mockEmergencyData: EmergencyData[] = [
-        {
-          id: 'emergency-001',
-          familyMemberId: 'divya-001',
-          familyMemberName: 'Divya',
-          bloodType: 'O+',
-          allergies: ['Penicillin', 'Shellfish'],
-          medications: ['Lisinopril 10mg', 'Metformin 500mg'],
-          medicalConditions: ['Hypertension', 'Type 2 Diabetes'],
-          emergencyContacts: [
-            { name: 'Tushar', relationship: 'Brother', phone: '+1-555-0123', isPrimary: true },
-            { name: 'Dr. Sarah Johnson', relationship: 'Doctor', phone: '+1-555-5678', isPrimary: false }
-          ],
-          insuranceInfo: {
-            provider: 'HealthPlus Insurance',
-            policyNumber: 'HP123456789',
-            groupNumber: 'GRP001'
-          },
-          doctorInfo: {
-            name: 'Dr. Sarah Johnson',
-            specialty: 'Internal Medicine',
-            phone: '+1-555-5678'
-          },
-          lastUpdated: '2024-01-15T09:15:00Z'
-        },
-        {
-          id: 'emergency-002',
-          familyMemberId: 'tushar-002',
-          familyMemberName: 'Tushar',
-          bloodType: 'A+',
-          allergies: ['Peanuts'],
-          medications: [],
-          medicalConditions: [],
-          emergencyContacts: [
-            { name: 'Divya', relationship: 'Sister', phone: '+1-555-0124', isPrimary: true },
-            { name: 'Dr. Michael Chen', relationship: 'Doctor', phone: '+1-555-5679', isPrimary: false }
-          ],
-          insuranceInfo: {
-            provider: 'HealthPlus Insurance',
-            policyNumber: 'HP123456790',
-            groupNumber: 'GRP001'
-          },
-          doctorInfo: {
-            name: 'Dr. Michael Chen',
-            specialty: 'General Practice',
-            phone: '+1-555-5679'
-          },
-          lastUpdated: '2024-01-15T09:15:00Z'
+      // Load medications from backend
+      const medicationsResponse = await fetch('/api/medications?userId=demo-user-123')
+      let medicationsData: any[] = []
+      if (medicationsResponse.ok) {
+        medicationsData = await medicationsResponse.json()
+        console.log('💊 Emergency ID: Loaded medications:', medicationsData)
+      }
+      
+      // Generate emergency data from family members and medications
+      const emergencyDataList: EmergencyData[] = familyMembers.map((member) => {
+        // Get medications for this family member
+        const memberMedications = medicationsData.filter(med => med.memberId === member.id)
+        const medicationNames = memberMedications.map(med => `${med.name} ${med.dosage}`)
+        
+        // Parse emergency contacts from member data
+        const emergencyContacts = []
+        if (member.emergencyContacts && typeof member.emergencyContacts === 'object') {
+          // Handle different emergency contact formats
+          if (member.emergencyContacts.name && member.emergencyContacts.phone) {
+            emergencyContacts.push({
+              name: member.emergencyContacts.name,
+              relationship: member.emergencyContacts.relationship || 'Emergency Contact',
+              phone: member.emergencyContacts.phone,
+              isPrimary: true
+            })
+          }
         }
-      ]
+        
+        // Add default emergency contact if none exists
+        if (emergencyContacts.length === 0) {
+          emergencyContacts.push({
+            name: 'Emergency Contact',
+            relationship: 'Contact',
+            phone: '+1-XXX-XXXX',
+            isPrimary: true
+          })
+        }
+        
+        // Parse insurance info
+        const insuranceInfo = {
+          provider: member.insurance?.provider || 'Unknown',
+          policyNumber: member.insurance?.policyNumber || 'N/A',
+          groupNumber: member.insurance?.groupNumber || 'N/A'
+        }
+        
+        // Parse doctor info
+        const doctorInfo = {
+          name: member.doctor?.name || 'Primary Care Physician',
+          specialty: member.doctor?.specialty || 'General Practice',
+          phone: member.doctor?.phone || 'Contact Hospital'
+        }
+        
+        return {
+          id: `emergency-${member.id}`,
+          familyMemberId: member.id,
+          familyMemberName: member.name,
+          bloodType: member.bloodType || 'Unknown',
+          allergies: member.allergies || [],
+          medications: medicationNames,
+          medicalConditions: member.conditions || [],
+          emergencyContacts,
+          insuranceInfo,
+          doctorInfo,
+          lastUpdated: new Date().toISOString()
+        }
+      })
 
-      setEmergencyData(mockEmergencyData)
+      setEmergencyData(emergencyDataList)
+      console.log('🚨 Emergency ID: Generated emergency data:', emergencyDataList)
     } catch (error) {
       console.error('Error loading emergency data:', error)
     } finally {
@@ -187,37 +240,77 @@ export default function EmergencyID() {
     }
   }
 
-  // Generate comprehensive QR data for a family member
+  // Generate human-readable QR data for emergency responders
   const generateQRData = (member: FamilyMember) => {
     const emergencyInfo = emergencyData.find(data => data.familyMemberId === member.id)
     if (!emergencyInfo) return ''
 
-    const qrData = {
-      // Basic Info
-      name: member.name,
-      age: member.age,
-      relationship: member.relationship,
-      
-      // Medical Info
-      bloodType: emergencyInfo.bloodType,
-      allergies: emergencyInfo.allergies,
-      medications: emergencyInfo.medications,
-      medicalConditions: emergencyInfo.medicalConditions,
-      
-      // Emergency Contacts
-      emergencyContacts: emergencyInfo.emergencyContacts,
-      
-      // Insurance & Doctor
-      insuranceInfo: emergencyInfo.insuranceInfo,
-      doctorInfo: emergencyInfo.doctorInfo,
-      
-      // Metadata
-      timestamp: new Date().toISOString(),
-      generatedBy: 'AURAA Health System',
-      version: '1.0'
+    let qrText = ''
+    
+    // Basic Information
+    qrText += `PATIENT: ${member.name}\n`
+    qrText += `AGE: ${member.age} years\n`
+    qrText += `RELATIONSHIP: ${member.relationship}\n`
+    qrText += `BLOOD TYPE: ${emergencyInfo.bloodType}\n\n`
+    
+    // Medical Conditions
+    if (emergencyInfo.medicalConditions && emergencyInfo.medicalConditions.length > 0) {
+      qrText += `MEDICAL CONDITIONS:\n`
+      emergencyInfo.medicalConditions.forEach(condition => {
+        qrText += `• ${condition}\n`
+      })
+      qrText += '\n'
     }
+    
+    // Allergies - CRITICAL INFORMATION
+    if (emergencyInfo.allergies && emergencyInfo.allergies.length > 0) {
+      qrText += `⚠️ ALLERGIES (CRITICAL):\n`
+      emergencyInfo.allergies.forEach(allergy => {
+        qrText += `• ${allergy}\n`
+      })
+      qrText += '\n'
+    } else {
+      qrText += `⚠️ ALLERGIES: None known\n\n`
+    }
+    
+    // Current Medications
+    if (emergencyInfo.medications && emergencyInfo.medications.length > 0) {
+      qrText += `CURRENT MEDICATIONS:\n`
+      emergencyInfo.medications.forEach(medication => {
+        qrText += `• ${medication}\n`
+      })
+      qrText += '\n'
+    }
+    
+    // Emergency Contacts
+    if (emergencyInfo.emergencyContacts && emergencyInfo.emergencyContacts.length > 0) {
+      qrText += `EMERGENCY CONTACTS:\n`
+      emergencyInfo.emergencyContacts.forEach(contact => {
+        qrText += `• ${contact.name} (${contact.relationship}): ${contact.phone}\n`
+      })
+      qrText += '\n'
+    }
+    
+    // Doctor Information
+    if (emergencyInfo.doctorInfo && emergencyInfo.doctorInfo.name !== 'Primary Care Physician') {
+      qrText += `DOCTOR:\n`
+      qrText += `• ${emergencyInfo.doctorInfo.name}\n`
+      qrText += `• Specialty: ${emergencyInfo.doctorInfo.specialty}\n`
+      qrText += `• Phone: ${emergencyInfo.doctorInfo.phone}\n\n`
+    }
+    
+    // Insurance Information
+    if (emergencyInfo.insuranceInfo && emergencyInfo.insuranceInfo.provider !== 'Unknown') {
+      qrText += `INSURANCE:\n`
+      qrText += `• Provider: ${emergencyInfo.insuranceInfo.provider}\n`
+      qrText += `• Policy: ${emergencyInfo.insuranceInfo.policyNumber}\n\n`
+    }
+    
+    // Footer
+    qrText += `Generated by AURAA Health System\n`
+    qrText += `Updated: ${new Date().toLocaleDateString()}`
 
-    return JSON.stringify(qrData, null, 2)
+    return qrText
   }
 
   // Generate QR code URL

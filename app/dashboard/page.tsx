@@ -12,6 +12,7 @@ import { FamilyMember } from '../../lib/client-data-service'
 import { realDataService } from '@/lib/real-data-service'
 import { 
   Users, 
+  User,
   Plus, 
   Heart, 
   Activity, 
@@ -166,6 +167,29 @@ export default function Dashboard() {
     return () => clearTimeout(timeout)
   }, [])
 
+  // Refresh data when component becomes visible (e.g., returning from medication page)
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (!document.hidden) {
+        console.log('🔄 Dashboard visible - refreshing data')
+        loadFamilyMembers()
+      }
+    }
+
+    const handleFocus = () => {
+      console.log('🔄 Dashboard focused - refreshing data')
+      loadFamilyMembers()
+    }
+
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    window.addEventListener('focus', handleFocus)
+    
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+      window.removeEventListener('focus', handleFocus)
+    }
+  }, [])
+
   const handleEditMember = (member: FamilyMember) => {
     setEditingMember(member)
   }
@@ -176,7 +200,7 @@ export default function Dashboard() {
       await realDataService.updateFamilyMember(updatedMember.id, {
         name: updatedMember.name,
         relationship: updatedMember.relationship,
-        dob: updatedMember.lastCheckup,
+        dob: updatedMember.dob,
         conditions: updatedMember.conditions,
         allergies: updatedMember.allergies || [],
         emergencyContacts: updatedMember.emergencyContacts || {},
@@ -476,8 +500,7 @@ export default function Dashboard() {
               const newMember = await realDataService.createFamilyMember('demo-user-123', {
                 name: m.name,
                 relationship: m.relationship,
-                dob: m.dob && m.dob.trim() !== '' ? new Date(m.dob).toISOString() : new Date().toISOString(),
-                gender: 'Unknown', // Default value
+                dob: m.dob && m.dob.trim() !== '' ? new Date(m.dob).toISOString() : new Date('1990-01-01').toISOString(),
                 gender: m.gender || 'Unknown',
                 email: m.email || undefined,
                 phone: m.countryCode && m.phone ? `${m.countryCode} ${m.phone}` : m.phone || undefined,
@@ -485,10 +508,10 @@ export default function Dashboard() {
                 height: m.height ? Number(m.height) : undefined,
                 weight: m.weight ? Number(m.weight) : undefined,
                 conditions: m.conditions || [],
-                allergies: [],
-                emergencyContacts: m.emergencyName || m.emergencyPhone ? { name: m.emergencyName, phone: m.emergencyPhone, relationship: m.emergencyRelation } : {},
-                insurance: m.insuranceProvider || m.insurancePolicy ? { provider: m.insuranceProvider, policyNumber: m.insurancePolicy } : {},
-                doctor: {}
+                allergies: m.allergies || [],
+                emergencyContacts: m.emergencyContacts || {},
+                insurance: m.insurance || {},
+                doctor: m.doctor || {}
               })
               
               console.log('✅ Dashboard: Created member via service:', newMember.name, newMember.id)
@@ -596,8 +619,10 @@ function AddMemberModal({ isOpen, onClose, onSubmit }: { isOpen: boolean, onClos
     lastCheckup: '',
     nextAppointment: '', medications: 0,
     conditions: '',
+    allergies: '', // Added allergies field
     emergencyName: '', emergencyPhone: '', emergencyRelation: '',
-    insuranceProvider: '', insurancePolicy: ''
+    insuranceProvider: '', insurancePolicy: '',
+    doctorName: '', doctorPhone: '', doctorSpecialty: '' // Added doctor info
   })
   const [isSubmitting, setIsSubmitting] = useState(false)
   
@@ -659,9 +684,9 @@ function AddMemberModal({ isOpen, onClose, onSubmit }: { isOpen: boolean, onClos
           <label className="text-sm text-gray-700 col-span-1">Weight (kg)
             <input className="mt-1 w-full px-3 py-2 border rounded-lg text-gray-900" type="number" value={form.weight} onChange={e=>setForm({...form, weight:e.target.value})} />
           </label>
-          <label className="text-sm text-gray-700 col-span-1">Date of Birth
-            <input className="mt-1 w-full px-3 py-2 border rounded-lg text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500" type="date" value={form.dob} onChange={e=>setForm({...form, dob:e.target.value})} />
-            <p className="text-xs text-gray-500 mt-1">Used to compute age and health score</p>
+          <label className="text-sm text-gray-700 col-span-1">Date of Birth *
+            <input className="mt-1 w-full px-3 py-2 border rounded-lg text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500" type="date" value={form.dob} onChange={e=>setForm({...form, dob:e.target.value})} required />
+            <p className="text-xs text-gray-500 mt-1">Required - Used to compute age and health score</p>
           </label>
           <label className="text-sm text-gray-700 col-span-1">Last Checkup Date
             <input className="mt-1 w-full px-3 py-2 border rounded-lg text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500" type="date" value={form.lastCheckup} onChange={e=>setForm({...form, lastCheckup:e.target.value})} />
@@ -683,6 +708,10 @@ function AddMemberModal({ isOpen, onClose, onSubmit }: { isOpen: boolean, onClos
           <label className="text-sm text-gray-700 col-span-2">Conditions (comma separated)
             <input className="mt-1 w-full px-3 py-2 border rounded-lg text-gray-900 placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="e.g., Hypertension, Diabetes" value={form.conditions} onChange={e=>setForm({...form, conditions:e.target.value})} />
           </label>
+          <label className="text-sm text-gray-700 col-span-2">Allergies (comma separated) ⚠️
+            <input className="mt-1 w-full px-3 py-2 border rounded-lg text-gray-900 placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-red-500" placeholder="e.g., Penicillin, Shellfish, Peanuts" value={form.allergies} onChange={e=>setForm({...form, allergies:e.target.value})} />
+            <p className="text-xs text-red-600 mt-1">⚠️ Important for emergency situations - list all known allergies</p>
+          </label>
           <div className="col-span-2 grid grid-cols-2 gap-4">
             <label className="text-sm text-gray-700">Emergency Contact Name
               <input className="mt-1 w-full px-3 py-2 border rounded-lg text-gray-900" value={form.emergencyName} onChange={e=>setForm({...form, emergencyName:e.target.value})} />
@@ -700,11 +729,40 @@ function AddMemberModal({ isOpen, onClose, onSubmit }: { isOpen: boolean, onClos
               <input className="mt-1 w-full px-3 py-2 border rounded-lg text-gray-900" value={form.insurancePolicy} onChange={e=>setForm({...form, insurancePolicy:e.target.value})} />
             </label>
           </div>
+          
+          {/* Doctor Information Section */}
+          <div className="col-span-2 border-t pt-4 mt-4">
+            <h4 className="text-sm font-semibold text-gray-900 mb-3 flex items-center">
+              <User className="w-4 h-4 mr-2 text-blue-600" />
+              Doctor Information
+            </h4>
+            <div className="grid grid-cols-3 gap-4">
+              <label className="text-sm text-gray-700">Doctor Name
+                <input className="mt-1 w-full px-3 py-2 border rounded-lg text-gray-900" placeholder="Dr. Smith" value={form.doctorName} onChange={e=>setForm({...form, doctorName:e.target.value})} />
+              </label>
+              <label className="text-sm text-gray-700">Doctor Phone
+                <input className="mt-1 w-full px-3 py-2 border rounded-lg text-gray-900" placeholder="+1-555-0123" value={form.doctorPhone} onChange={e=>setForm({...form, doctorPhone:e.target.value})} />
+              </label>
+              <label className="text-sm text-gray-700">Specialty
+                <input className="mt-1 w-full px-3 py-2 border rounded-lg text-gray-900" placeholder="Internal Medicine" value={form.doctorSpecialty} onChange={e=>setForm({...form, doctorSpecialty:e.target.value})} />
+              </label>
+            </div>
+          </div>
         </div>
         <div className="flex gap-3 justify-end">
           <button
             onClick={async () => {
               if (isSubmitting) return
+              
+              // Validate required fields
+              if (!form.name.trim()) {
+                alert('Please enter a name')
+                return
+              }
+              if (!form.dob) {
+                alert('Please enter a date of birth')
+                return
+              }
               
               setIsSubmitting(true)
               console.log('🔄 Modal: Starting member creation process...')
@@ -712,7 +770,19 @@ function AddMemberModal({ isOpen, onClose, onSubmit }: { isOpen: boolean, onClos
               const member = {
                 id: Date.now(),
                 name: form.name || 'New Member',
-                age: Number(form.age) || 0,
+                age: (() => {
+                  if (form.dob && form.dob.trim() !== '') {
+                    const birth = new Date(form.dob)
+                    if (!isNaN(birth.getTime())) {
+                      const today = new Date()
+                      let a = today.getFullYear() - birth.getFullYear()
+                      const m = today.getMonth() - birth.getMonth()
+                      if (m < 0 || (m === 0 && today.getDate() < birth.getDate())) a--
+                      return Math.max(0, a)
+                    }
+                  }
+                  return 0
+                })(),
                 relationship: form.relationship || 'Family Member',
                 avatar: form.avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(form.name || 'New Member')}&background=6366f1&color=fff&size=150`,
                 healthScore: calculatedHealthScore,
@@ -721,6 +791,27 @@ function AddMemberModal({ isOpen, onClose, onSubmit }: { isOpen: boolean, onClos
                 nextAppointment: form.nextAppointment,
                 medications: Number(form.medications) || 0,
                 conditions: (form.conditions || '').split(',').map(s=>s.trim()).filter(Boolean),
+                allergies: (form.allergies || '').split(',').map(s=>s.trim()).filter(Boolean),
+                emergencyContacts: {
+                  name: form.emergencyName || '',
+                  phone: form.emergencyPhone || '',
+                  relationship: form.emergencyRelation || ''
+                },
+                insurance: {
+                  provider: form.insuranceProvider || '',
+                  policyNumber: form.insurancePolicy || ''
+                },
+                doctor: {
+                  name: form.doctorName || '',
+                  phone: form.doctorPhone || '',
+                  specialty: form.doctorSpecialty || ''
+                },
+                bloodType: form.bloodType || '',
+                gender: form.gender || '',
+                email: form.email || '',
+                phone: form.phone ? `${form.countryCode}${form.phone}` : '',
+                height: form.height || '',
+                weight: form.weight || '',
                 status: (() => {
                   if (calculatedHealthScore >= 90) return 'excellent' as const
                   if (calculatedHealthScore >= 75) return 'good' as const
@@ -742,10 +833,16 @@ function AddMemberModal({ isOpen, onClose, onSubmit }: { isOpen: boolean, onClos
                 onClose()
                 // Reset form after successful submission
                 setForm({
-                  name: '', age: '', relationship: 'Family Member', avatar: '',
-                  dob: '', lastCheckup: '',
+                  name: '', relationship: 'Family Member', avatar: '',
+                  dob: '', gender: '', bloodType: '',
+                  email: '', countryCode: '+91', phone: '', height: '', weight: '',
+                  lastCheckup: '',
                   nextAppointment: '', medications: 0,
-                  conditions: ''
+                  conditions: '',
+                  allergies: '', // Added allergies field
+                  emergencyName: '', emergencyPhone: '', emergencyRelation: '',
+                  insuranceProvider: '', insurancePolicy: '',
+                  doctorName: '', doctorPhone: '', doctorSpecialty: '' // Added doctor fields
                 })
               } catch (error) {
                 console.error('❌ Modal: Error adding member:', error)

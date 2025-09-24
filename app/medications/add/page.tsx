@@ -1,7 +1,8 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
+import { useSearchParams } from 'next/navigation'
 import Navigation from '@/components/Navigation'
 import { 
   ArrowLeft,
@@ -45,6 +46,7 @@ interface FamilyMember {
 }
 
 export default function AddMedicationPage() {
+  const searchParams = useSearchParams()
   const [form, setForm] = useState<Partial<Medication>>({
     name: '',
     dosage: '',
@@ -64,14 +66,37 @@ export default function AddMedicationPage() {
   const [selectedMember, setSelectedMember] = useState<string>('')
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [showSuccess, setShowSuccess] = useState(false)
+  const [familyMembers, setFamilyMembers] = useState<FamilyMember[]>([])
 
-  // Mock family members
-  const familyMembers: FamilyMember[] = [
-    { id: 'divya-001', name: 'Divya', relationship: 'Self' },
-    { id: 'tushar-002', name: 'Tushar', relationship: 'Brother' },
-    { id: 'mom-003', name: 'Mom', relationship: 'Mother' },
-    { id: 'dad-004', name: 'Dad', relationship: 'Father' }
-  ]
+  // Load family members from backend and handle URL parameters
+  useEffect(() => {
+    const loadFamilyMembers = async () => {
+      try {
+        const response = await fetch('/api/family-members?userId=demo-user-123')
+        if (response.ok) {
+          const membersData = await response.json()
+          const formattedMembers = membersData.map((member: any) => ({
+            id: member.id,
+            name: member.name,
+            relationship: member.relationship
+          }))
+          setFamilyMembers(formattedMembers)
+          
+          // Auto-select member if memberId is provided in URL
+          const memberId = searchParams.get('memberId')
+          if (memberId && formattedMembers.find((m: any) => m.id === memberId)) {
+            setSelectedMember(memberId)
+          }
+        }
+      } catch (error) {
+        console.error('Error loading family members:', error)
+      }
+    }
+    
+    loadFamilyMembers()
+  }, [searchParams])
+
+  // Family members are now loaded from backend in useEffect
 
   const frequencyOptions = [
     'Once daily',
@@ -135,18 +160,36 @@ export default function AddMedicationPage() {
     setIsSubmitting(true)
 
     try {
-      // Simulate API call
-      await new Promise(resolve => setTimeout(resolve, 1500))
-      
-      console.log('Medication added:', {
-        ...form,
-        memberId: selectedMember,
-        id: `med-${Date.now()}`
+      // Save medication to database via API
+      const response = await fetch('/api/medications', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          userId: 'demo-user-123', // Use the same demo user ID
+          memberId: selectedMember,
+          name: form.name,
+          dosage: form.dosage,
+          frequency: form.frequency,
+          startDate: form.startDate,
+          endDate: form.endDate || null,
+          sideEffects: form.sideEffects || [],
+          reminders: form.reminders || {},
+          status: 'active'
+        })
       })
+
+      if (!response.ok) {
+        throw new Error('Failed to save medication')
+      }
+
+      const savedMedication = await response.json()
+      console.log('Medication saved successfully:', savedMedication)
       
       setShowSuccess(true)
       
-      // Reset form after success
+      // Reset form and redirect to dashboard after success
       setTimeout(() => {
         setForm({
           name: '',
@@ -165,10 +208,14 @@ export default function AddMedicationPage() {
         })
         setSelectedMember('')
         setShowSuccess(false)
-      }, 3000)
+        
+        // Redirect to dashboard to see updated medication count
+        window.location.href = '/dashboard'
+      }, 2000)
       
     } catch (error) {
       console.error('Error adding medication:', error)
+      // You could add error state handling here
     } finally {
       setIsSubmitting(false)
     }
