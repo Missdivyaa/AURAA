@@ -283,11 +283,11 @@ export default function AIInsights() {
             recommendations: ['Rest and hydration', 'Over-the-counter cold medicine', 'Warm liquids']
           },
           {
-            name: 'Allergic Reaction',
+            name: 'Swine Flu',
             probability: 60,
-            description: 'Immune system response to allergens',
+            description: 'Influenza A (H1N1) like illness with fever, cough, sore throat, body aches',
             urgency: 'medium',
-            recommendations: ['Antihistamines', 'Avoid known allergens', 'Monitor for severe reactions']
+            recommendations: ['Consider antivirals within 48 hours', 'Rest and fluids', 'Monitor temperature and breathing']
           }
         ],
         urgencyLevel: 'medium',
