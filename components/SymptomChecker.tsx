@@ -126,3 +126,9 @@ export default function SymptomChecker({ onSymptomSelect }: SymptomCheckerProps)
 
 
 
+
+
+
+
+
+

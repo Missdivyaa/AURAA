@@ -2,7 +2,9 @@
 
 import { useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
+import { useUser, useAuth } from '@clerk/nextjs'
 import Navigation from '@/components/Navigation'
+import { graphqlRequest } from '@/lib/graphql-client'
 import { 
   Calendar, 
   Clock, 
@@ -52,7 +54,55 @@ interface Doctor {
   availability: string[]
 }
 
+// GraphQL Queries and Mutations
+const GET_APPOINTMENTS = `
+  query GetAppointments {
+    appointments {
+      id
+      doctorName
+      specialty
+      hospital
+      date
+      time
+      notes
+      status
+      reminderSent
+      memberId
+      member {
+        id
+        name
+      }
+    }
+  }
+`
+
+const DELETE_APPOINTMENT = `
+  mutation DeleteAppointment($id: ID!) {
+    deleteAppointment(id: $id)
+  }
+`
+
+const MARK_APPOINTMENT_COMPLETED = `
+  mutation MarkAppointmentCompleted($id: ID!, $notes: String) {
+    markAppointmentCompleted(id: $id, notes: $notes) {
+      id
+      status
+    }
+  }
+`
+
+const CANCEL_APPOINTMENT = `
+  mutation CancelAppointment($id: ID!, $reason: String) {
+    cancelAppointment(id: $id, reason: $reason) {
+      id
+      status
+    }
+  }
+`
+
 export default function Appointments() {
+  const { isSignedIn, user, isLoaded } = useUser()
+  const { getToken } = useAuth()
   const [appointments, setAppointments] = useState<Appointment[]>([])
   const [doctors, setDoctors] = useState<Doctor[]>([])
   const [loading, setLoading] = useState(true)
@@ -61,132 +111,140 @@ export default function Appointments() {
   const [selectedDate, setSelectedDate] = useState(new Date())
 
   useEffect(() => {
-    loadAppointments()
-  }, [])
+    if (isLoaded && isSignedIn && user) {
+      loadAppointments()
+    }
+  }, [isLoaded, isSignedIn, user])
 
   const loadAppointments = async () => {
+    if (!user) return
+    
     try {
       setLoading(true)
       
-      // Simulate loading delay
-      await new Promise(resolve => setTimeout(resolve, 1000))
+      // Get Clerk token
+      const token = await getToken()
+      if (!token) {
+        throw new Error('No authentication token available')
+      }
       
-      // Mock appointments data
-      const mockAppointments: Appointment[] = [
-        {
-          id: '1',
-          title: 'Annual Physical Examination',
-          doctor: 'Dr. Sarah Johnson',
-          specialty: 'Internal Medicine',
-          date: '2024-01-20',
-          time: '10:00 AM',
-          duration: 60,
-          location: 'City Medical Center',
-          address: '123 Health St, Medical City, MC 12345',
-          phone: '(555) 123-4567',
-          email: 'sarah.johnson@citymedical.com',
-          status: 'scheduled',
-          notes: 'Annual checkup, bring insurance card',
-          familyMemberId: 'divya-001',
-          familyMemberName: 'Divya',
-          reminderSent: false
-        },
-        {
-          id: '2',
-          title: 'Cardiology Consultation',
-          doctor: 'Dr. Michael Chen',
-          specialty: 'Cardiology',
-          date: '2024-01-25',
-          time: '2:30 PM',
-          duration: 45,
-          location: 'Heart Specialist Clinic',
-          address: '456 Cardiac Ave, Heart City, HC 67890',
-          phone: '(555) 987-6543',
-          email: 'michael.chen@heartclinic.com',
-          status: 'confirmed',
-          notes: 'Follow-up for blood pressure monitoring',
-          familyMemberId: 'divya-001',
-          familyMemberName: 'Divya',
-          reminderSent: true
-        },
-        {
-          id: '3',
-          title: 'Dental Cleaning',
-          doctor: 'Dr. Emily Rodriguez',
-          specialty: 'Dentistry',
-          date: '2024-01-18',
-          time: '9:00 AM',
-          duration: 30,
-          location: 'Bright Smile Dental',
-          address: '789 Dental Blvd, Smile City, SC 54321',
-          phone: '(555) 456-7890',
-          email: 'emily.rodriguez@brightsmile.com',
-          status: 'completed',
-          notes: 'Regular cleaning, no issues found',
-          familyMemberId: 'tushar-002',
-          familyMemberName: 'Tushar',
-          reminderSent: true
-        },
-        {
-          id: '4',
-          title: 'Eye Examination',
-          doctor: 'Dr. David Kim',
-          specialty: 'Ophthalmology',
-          date: '2024-02-05',
-          time: '11:15 AM',
-          duration: 45,
-          location: 'Vision Care Center',
-          address: '321 Eye St, Vision City, VC 98765',
-          phone: '(555) 321-9876',
-          email: 'david.kim@visioncare.com',
-          status: 'scheduled',
-          notes: 'Annual eye exam, bring current glasses',
-          familyMemberId: 'tushar-002',
-          familyMemberName: 'Tushar',
-          reminderSent: false
+      // Fetch appointments from GraphQL API
+      const data = await graphqlRequest(GET_APPOINTMENTS, {}, token)
+      console.log('📅 Loaded appointments from GraphQL:', data)
+      
+      // Convert backend data to frontend format
+      const formattedAppointments: Appointment[] = (data.appointments || []).map((apt: any) => ({
+        id: apt.id,
+        title: `${apt.specialty} Appointment`,
+        doctor: apt.doctorName,
+        specialty: apt.specialty,
+        date: new Date(apt.date).toISOString().split('T')[0],
+        time: apt.time,
+        duration: 60, // Default duration, can be added to schema
+        location: apt.hospital || 'Not specified',
+        address: apt.hospital || 'Not specified', // Address not in schema yet
+        phone: '', // Phone not in schema yet
+        email: '', // Email not in schema yet
+        status: apt.status as 'scheduled' | 'confirmed' | 'completed' | 'cancelled' | 'rescheduled',
+        notes: apt.notes || '',
+        familyMemberId: apt.memberId || '',
+        familyMemberName: apt.member?.name || 'Self',
+        reminderSent: apt.reminderSent || false
+      }))
+      
+      setAppointments(formattedAppointments)
+      
+      // Extract unique doctors from appointments
+      const uniqueDoctors = new Map<string, Doctor>()
+      formattedAppointments.forEach(apt => {
+        if (!uniqueDoctors.has(apt.doctor)) {
+          uniqueDoctors.set(apt.doctor, {
+            id: apt.doctor,
+            name: apt.doctor,
+            specialty: apt.specialty,
+            hospital: apt.location,
+            phone: apt.phone,
+            email: apt.email,
+            rating: 4.5, // Default rating
+            availability: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
+          })
         }
-      ]
-
-      const mockDoctors: Doctor[] = [
-        {
-          id: '1',
-          name: 'Dr. Sarah Johnson',
-          specialty: 'Internal Medicine',
-          hospital: 'City Medical Center',
-          phone: '(555) 123-4567',
-          email: 'sarah.johnson@citymedical.com',
-          rating: 4.8,
-          availability: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
-        },
-        {
-          id: '2',
-          name: 'Dr. Michael Chen',
-          specialty: 'Cardiology',
-          hospital: 'Heart Specialist Clinic',
-          phone: '(555) 987-6543',
-          email: 'michael.chen@heartclinic.com',
-          rating: 4.9,
-          availability: ['Monday', 'Wednesday', 'Friday']
-        },
-        {
-          id: '3',
-          name: 'Dr. Emily Rodriguez',
-          specialty: 'Dentistry',
-          hospital: 'Bright Smile Dental',
-          phone: '(555) 456-7890',
-          email: 'emily.rodriguez@brightsmile.com',
-          rating: 4.7,
-          availability: ['Monday', 'Tuesday', 'Thursday', 'Friday']
-        }
-      ]
-
-      setAppointments(mockAppointments)
-      setDoctors(mockDoctors)
+      })
+      setDoctors(Array.from(uniqueDoctors.values()))
       
     } catch (error) {
       console.error('Error loading appointments:', error)
+      setAppointments([])
     } finally {
       setLoading(false)
+    }
+  }
+
+  const handleDeleteAppointment = async (id: string) => {
+    if (!user) return
+    
+    try {
+      const token = await getToken()
+      if (!token) {
+        throw new Error('No authentication token available')
+      }
+      
+      await graphqlRequest(DELETE_APPOINTMENT, { id }, token)
+      
+      // Remove from local state
+      setAppointments(prev => prev.filter(a => a.id !== id))
+      
+      console.log('✅ Appointment deleted:', id)
+    } catch (error) {
+      console.error('Error deleting appointment:', error)
+      alert('Failed to delete appointment. Please try again.')
+    }
+  }
+
+  const handleMarkCompleted = async (id: string) => {
+    if (!user) return
+    
+    try {
+      const token = await getToken()
+      if (!token) {
+        throw new Error('No authentication token available')
+      }
+      
+      const data = await graphqlRequest(MARK_APPOINTMENT_COMPLETED, { id, notes: '' }, token)
+      
+      // Update local state
+      setAppointments(prev => prev.map(a => 
+        a.id === id ? { ...a, status: 'completed' as const } : a
+      ))
+      
+      console.log('✅ Appointment marked as completed:', id)
+    } catch (error) {
+      console.error('Error marking appointment as completed:', error)
+      alert('Failed to update appointment. Please try again.')
+    }
+  }
+
+  const handleCancelAppointment = async (id: string) => {
+    if (!user) return
+    
+    try {
+      const token = await getToken()
+      if (!token) {
+        throw new Error('No authentication token available')
+      }
+      
+      const reason = prompt('Please provide a reason for cancellation:') || 'No reason provided'
+      const data = await graphqlRequest(CANCEL_APPOINTMENT, { id, reason }, token)
+      
+      // Update local state
+      setAppointments(prev => prev.map(a => 
+        a.id === id ? { ...a, status: 'cancelled' as const } : a
+      ))
+      
+      console.log('✅ Appointment cancelled:', id)
+    } catch (error) {
+      console.error('Error cancelling appointment:', error)
+      alert('Failed to cancel appointment. Please try again.')
     }
   }
 
@@ -255,7 +313,7 @@ export default function Appointments() {
                   Filter
                 </button>
                 <button 
-                  onClick={() => setShowAddModal(true)}
+                  onClick={() => window.location.href = '/appointments/schedule'}
                   className="inline-flex items-center px-6 py-3 bg-primary-600 text-white rounded-xl font-semibold hover:bg-primary-700 transition-colors shadow-lg"
                 >
                   <Plus className="w-5 h-5 mr-2" />
@@ -383,10 +441,49 @@ export default function Appointments() {
                           </div>
                           
                           <div className="flex flex-col space-y-2 ml-6">
-                            <button className="p-2 text-gray-400 hover:text-blue-600 transition-colors">
+                            <button 
+                              onClick={() => {
+                                // Navigate to schedule page with appointment ID
+                                window.location.href = `/appointments/schedule?id=${appointment.id}`
+                              }}
+                              className="p-2 text-gray-400 hover:text-blue-600 transition-colors"
+                            >
                               <Edit className="w-4 h-4" />
                             </button>
-                            <button className="p-2 text-gray-400 hover:text-red-600 transition-colors">
+                            {appointment.status !== 'completed' && appointment.status !== 'cancelled' && (
+                              <>
+                                <button 
+                                  onClick={() => {
+                                    if (confirm('Mark this appointment as completed?')) {
+                                      handleMarkCompleted(appointment.id)
+                                    }
+                                  }}
+                                  className="p-2 text-gray-400 hover:text-green-600 transition-colors"
+                                  title="Mark as completed"
+                                >
+                                  <CheckCircle className="w-4 h-4" />
+                                </button>
+                                <button 
+                                  onClick={() => {
+                                    if (confirm('Cancel this appointment?')) {
+                                      handleCancelAppointment(appointment.id)
+                                    }
+                                  }}
+                                  className="p-2 text-gray-400 hover:text-yellow-600 transition-colors"
+                                  title="Cancel appointment"
+                                >
+                                  <AlertCircle className="w-4 h-4" />
+                                </button>
+                              </>
+                            )}
+                            <button 
+                              onClick={() => {
+                                if (confirm('Are you sure you want to delete this appointment?')) {
+                                  handleDeleteAppointment(appointment.id)
+                                }
+                              }}
+                              className="p-2 text-gray-400 hover:text-red-600 transition-colors"
+                            >
                               <Trash2 className="w-4 h-4" />
                             </button>
                           </div>
@@ -401,7 +498,7 @@ export default function Appointments() {
                   <h3 className="text-lg font-semibold text-gray-900 mb-2">No upcoming appointments</h3>
                   <p className="text-gray-600 mb-4">Schedule your next appointment to get started</p>
                   <button 
-                    onClick={() => setShowAddModal(true)}
+                    onClick={() => window.location.href = '/appointments/schedule'}
                     className="inline-flex items-center px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors"
                   >
                     <Plus className="w-4 h-4 mr-2" />

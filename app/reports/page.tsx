@@ -2,7 +2,9 @@
 
 import { useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
+import { useUser, useAuth } from '@clerk/nextjs'
 import Navigation from '@/components/Navigation'
+import { graphqlRequest } from '@/lib/graphql-client'
 import { 
   FileText, 
   Upload, 
@@ -74,7 +76,48 @@ interface ReportTemplate {
   metrics: string[]
 }
 
+// GraphQL Queries and Mutations
+const GET_HEALTH_REPORTS = `
+  query GetHealthReports {
+    healthReports {
+      id
+      fileName
+      fileType
+      fileUrl
+      fileSize
+      status
+      extractedText
+      analysis
+      memberId
+      member {
+        id
+        name
+      }
+      createdAt
+      updatedAt
+    }
+  }
+`
+
+const DELETE_HEALTH_REPORT = `
+  mutation DeleteHealthReport($id: ID!) {
+    deleteHealthReport(id: $id)
+  }
+`
+
+const PROCESS_HEALTH_REPORT = `
+  mutation ProcessHealthReport($id: ID!) {
+    processHealthReport(id: $id) {
+      id
+      status
+      analysis
+    }
+  }
+`
+
 export default function Reports() {
+  const { isSignedIn, user, isLoaded } = useUser()
+  const { getToken } = useAuth()
   const [reports, setReports] = useState<HealthReport[]>([])
   const [templates, setTemplates] = useState<ReportTemplate[]>([])
   const [loading, setLoading] = useState(true)
@@ -84,18 +127,167 @@ export default function Reports() {
   const [filterType, setFilterType] = useState('all')
 
   useEffect(() => {
-    loadReports()
-  }, [])
+    if (isLoaded && isSignedIn && user) {
+      loadReports()
+      loadTemplates()
+    }
+  }, [isLoaded, isSignedIn, user])
+
+  const loadTemplates = () => {
+    // Report templates are static UI elements
+    const mockTemplates: ReportTemplate[] = [
+      {
+        id: '1',
+        name: 'Health Summary',
+        description: 'Comprehensive monthly health overview',
+        icon: FileText,
+        category: 'Summary',
+        metrics: ['Blood Pressure', 'Weight', 'Steps', 'Sleep', 'Medications']
+      },
+      {
+        id: '2',
+        name: 'Trend Analysis',
+        description: 'Analyze health trends over time',
+        icon: TrendingUp,
+        category: 'Analytics',
+        metrics: ['Blood Pressure', 'Heart Rate', 'Weight', 'Activity']
+      },
+      {
+        id: '3',
+        name: 'Medication Report',
+        description: 'Medication adherence and effectiveness',
+        icon: Activity,
+        category: 'Medications',
+        metrics: ['Adherence Rate', 'Side Effects', 'Effectiveness']
+      },
+      {
+        id: '4',
+        name: 'Exercise Summary',
+        description: 'Physical activity and fitness metrics',
+        icon: Activity,
+        category: 'Fitness',
+        metrics: ['Steps', 'Calories', 'Exercise Duration', 'Heart Rate']
+      },
+      {
+        id: '5',
+        name: 'Sleep Analysis',
+        description: 'Sleep patterns and quality metrics',
+        icon: Clock,
+        category: 'Sleep',
+        metrics: ['Sleep Duration', 'Sleep Quality', 'Sleep Stages']
+      },
+      {
+        id: '6',
+        name: 'Custom Report',
+        description: 'Create a personalized health report',
+        icon: Target,
+        category: 'Custom',
+        metrics: ['Select Metrics']
+      }
+    ]
+    setTemplates(mockTemplates)
+  }
 
   const loadReports = async () => {
+    if (!user) return
+    
     try {
       setLoading(true)
       
-      // Simulate loading delay
-      await new Promise(resolve => setTimeout(resolve, 1000))
+      // Get Clerk token
+      const token = await getToken()
+      if (!token) {
+        throw new Error('No authentication token available')
+      }
       
-      // Mock health reports data
-      const mockReports: HealthReport[] = [
+      // Fetch health reports from GraphQL API
+      const data = await graphqlRequest(GET_HEALTH_REPORTS, {}, token)
+      console.log('📄 Loaded health reports from GraphQL:', data)
+      
+      // Convert backend data to frontend format
+      const formattedReports: HealthReport[] = (data.healthReports || []).map((report: any) => {
+        const analysis = report.analysis || {}
+        const insights = analysis.keyFindings || []
+        
+        return {
+          id: report.id,
+          title: report.fileName || 'Health Report',
+          type: 'summary' as const, // Can be determined from analysis
+          dateRange: {
+            start: new Date(report.createdAt).toISOString().split('T')[0],
+            end: new Date(report.updatedAt).toISOString().split('T')[0]
+          },
+          familyMemberId: report.memberId || '',
+          familyMemberName: report.member?.name || 'Self',
+          generatedAt: report.createdAt,
+          status: report.status === 'analyzed' ? 'ready' as const : 
+                  report.status === 'processing' ? 'generating' as const : 
+                  'ready' as const,
+          insights: insights.map((finding: string, idx: number) => ({
+            title: `Finding ${idx + 1}`,
+            description: finding,
+            type: idx % 2 === 0 ? 'positive' as const : 'neutral' as const,
+            icon: CheckCircle
+          })),
+          metrics: [], // Can be extracted from analysis if available
+          recommendations: analysis.recommendations || [],
+          fileUrl: report.fileUrl,
+          fileName: report.fileName,
+          fileSize: report.fileSize ? `${(report.fileSize / 1024 / 1024).toFixed(1)} MB` : undefined
+        }
+      })
+      
+      setReports(formattedReports)
+      
+    } catch (error) {
+      console.error('Error loading health reports:', error)
+      setReports([])
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleDeleteReport = async (id: string) => {
+    if (!user) return
+    
+    try {
+      const token = await getToken()
+      if (!token) {
+        throw new Error('No authentication token available')
+      }
+      
+      await graphqlRequest(DELETE_HEALTH_REPORT, { id }, token)
+      
+      // Remove from local state
+      setReports(prev => prev.filter(r => r.id !== id))
+      
+      console.log('✅ Health report deleted:', id)
+    } catch (error) {
+      console.error('Error deleting health report:', error)
+      alert('Failed to delete report. Please try again.')
+    }
+  }
+
+  const handleProcessReport = async (id: string) => {
+    if (!user) return
+    
+    try {
+      const token = await getToken()
+      if (!token) {
+        throw new Error('No authentication token available')
+      }
+      
+      const data = await graphqlRequest(PROCESS_HEALTH_REPORT, { id }, token)
+      
+      // Reload reports to get updated data
+      await loadReports()
+      
+      console.log('✅ Health report processed:', id)
+    } catch (error) {
+      console.error('Error processing health report:', error)
+      alert('Failed to process report. Please try again.')
+    }
+  }
         {
           id: '1',
           title: 'Monthly Health Summary - January 2024',
@@ -375,11 +567,11 @@ export default function Reports() {
                   Filter
                 </button>
                 <button 
-                  onClick={() => setShowGenerateModal(true)}
+                  onClick={() => window.location.href = '/reports/upload'}
                   className="inline-flex items-center px-6 py-3 bg-primary-600 text-white rounded-xl font-semibold hover:bg-primary-700 transition-colors shadow-lg"
                 >
                   <Plus className="w-5 h-5 mr-2" />
-                  Generate Report
+                  Upload Report
                 </button>
               </div>
             </div>
@@ -518,9 +710,25 @@ export default function Reports() {
                             <button className="p-3 text-gray-400 hover:text-blue-600 transition-colors">
                               <Share className="w-5 h-5" />
                             </button>
-                            <button className="p-3 text-gray-400 hover:text-red-600 transition-colors">
+                            <button 
+                              onClick={() => {
+                                if (confirm('Are you sure you want to delete this report?')) {
+                                  handleDeleteReport(report.id)
+                                }
+                              }}
+                              className="p-3 text-gray-400 hover:text-red-600 transition-colors"
+                            >
                               <Trash2 className="w-5 h-5" />
                             </button>
+                            {report.status === 'ready' && !report.analysis && (
+                              <button 
+                                onClick={() => handleProcessReport(report.id)}
+                                className="p-3 text-gray-400 hover:text-blue-600 transition-colors"
+                                title="Process report"
+                              >
+                                <Zap className="w-5 h-5" />
+                              </button>
+                            )}
                           </div>
                         </div>
 

@@ -2,7 +2,9 @@
 
 import { useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
+import { useUser, useAuth } from '@clerk/nextjs'
 import Navigation from '@/components/Navigation'
+import { graphqlRequest } from '@/lib/graphql-client'
 import { 
   Search, 
   Brain, 
@@ -58,7 +60,51 @@ interface CommonSymptom {
   icon: any
 }
 
+// GraphQL Queries and Mutations
+const GET_SYMPTOM_ANALYSES = `
+  query GetSymptomAnalyses {
+    symptomAnalyses {
+      id
+      symptoms
+      analysis
+      conditions
+      urgencyLevel
+      createdAt
+      memberId
+      member {
+        id
+        name
+      }
+    }
+  }
+`
+
+const ANALYZE_SYMPTOMS = `
+  mutation AnalyzeSymptoms($symptoms: JSON!, $memberId: ID) {
+    analyzeSymptoms(symptoms: $symptoms, memberId: $memberId) {
+      id
+      symptoms
+      analysis
+      conditions
+      urgencyLevel
+      createdAt
+      member {
+        id
+        name
+      }
+    }
+  }
+`
+
+const DELETE_SYMPTOM_ANALYSIS = `
+  mutation DeleteSymptomAnalysis($id: ID!) {
+    deleteSymptomAnalysis(id: $id)
+  }
+`
+
 export default function SymptomChecker() {
+  const { isSignedIn, user, isLoaded } = useUser()
+  const { getToken } = useAuth()
   const [selectedSymptoms, setSelectedSymptoms] = useState<Symptom[]>([])
   const [analysis, setAnalysis] = useState<SymptomAnalysis | null>(null)
   const [loading, setLoading] = useState(false)
@@ -91,50 +137,58 @@ export default function SymptomChecker() {
   ]
 
   useEffect(() => {
-    loadAnalysisHistory()
-  }, [])
+    if (isLoaded && isSignedIn && user) {
+      loadAnalysisHistory()
+    }
+  }, [isLoaded, isSignedIn, user])
 
   const loadAnalysisHistory = async () => {
+    if (!user) return
+    
     try {
-      // Mock analysis history
-      const mockHistory: SymptomAnalysis[] = [
-        {
-          id: '1',
-          symptoms: [
-            { id: '1', name: 'Fever', category: 'General', severity: 'moderate', duration: '2 days', frequency: 'continuous' },
-            { id: '2', name: 'Headache', category: 'Neurological', severity: 'mild', duration: '1 day', frequency: 'intermittent' }
-          ],
-          possibleConditions: [
-            {
-              name: 'Viral Infection',
-              probability: 75,
-              description: 'Common viral infection causing fever and headache',
-              urgency: 'medium',
-              recommendations: ['Rest and hydration', 'Over-the-counter fever reducers', 'Monitor symptoms']
-            },
-            {
-              name: 'Flu',
-              probability: 60,
-              description: 'Influenza with typical symptoms',
-              urgency: 'medium',
-              recommendations: ['Antiviral medication if caught early', 'Rest and fluids', 'Avoid contact with others']
-            }
-          ],
-          generalRecommendations: [
-            'Get plenty of rest',
-            'Stay hydrated',
-            'Monitor temperature regularly',
-            'Seek medical attention if symptoms worsen'
-          ],
-          urgencyLevel: 'medium',
-          analysisDate: '2024-01-15T10:30:00Z',
-          familyMemberId: 'divya-001',
-          familyMemberName: 'Divya'
+      const token = await getToken()
+      if (!token) {
+        throw new Error('No authentication token available')
+      }
+      
+      const data = await graphqlRequest(GET_SYMPTOM_ANALYSES, {}, token)
+      console.log('🔍 Loaded symptom analyses from GraphQL:', data)
+      
+      // Convert backend data to frontend format
+      const formattedHistory: SymptomAnalysis[] = (data.symptomAnalyses || []).map((analysis: any) => {
+        const symptoms = Array.isArray(analysis.symptoms) ? analysis.symptoms : []
+        const conditions = Array.isArray(analysis.conditions) ? analysis.conditions : []
+        const analysisData = analysis.analysis || {}
+        
+        return {
+          id: analysis.id,
+          symptoms: symptoms.map((s: any, idx: number) => ({
+            id: idx.toString(),
+            name: s.name || 'Unknown',
+            category: s.category || 'General',
+            severity: s.severity || 'mild' as const,
+            duration: s.duration || 'Unknown',
+            frequency: s.frequency || 'Unknown'
+          })),
+          possibleConditions: conditions.map((cond: any) => ({
+            name: cond.name || 'Unknown Condition',
+            probability: cond.probability || 50,
+            description: cond.description || '',
+            urgency: cond.urgency || 'medium' as const,
+            recommendations: cond.recommendations || []
+          })),
+          generalRecommendations: analysisData.recommendations || [],
+          urgencyLevel: analysis.urgencyLevel || 'medium' as const,
+          analysisDate: analysis.createdAt,
+          familyMemberId: analysis.memberId || '',
+          familyMemberName: analysis.member?.name || 'Self'
         }
-      ]
-      setAnalysisHistory(mockHistory)
+      })
+      
+      setAnalysisHistory(formattedHistory)
     } catch (error) {
       console.error('Error loading analysis history:', error)
+      setAnalysisHistory([])
     }
   }
 
@@ -161,6 +215,8 @@ export default function SymptomChecker() {
   }
 
   const analyzeSymptoms = async () => {
+    if (!user) return
+    
     if (selectedSymptoms.length === 0) {
       alert('Please select at least one symptom to analyze')
       return
@@ -169,50 +225,89 @@ export default function SymptomChecker() {
     try {
       setLoading(true)
       
-      // Simulate AI analysis delay
-      await new Promise(resolve => setTimeout(resolve, 3000))
+      const token = await getToken()
+      if (!token) {
+        throw new Error('No authentication token available')
+      }
       
-      // Mock AI analysis
-      const mockAnalysis: SymptomAnalysis = {
-        id: Date.now().toString(),
+      // Prepare symptoms data for GraphQL
+      const symptomsData = selectedSymptoms.map(s => ({
+        name: s.name,
+        category: s.category,
+        severity: s.severity,
+        duration: s.duration,
+        frequency: s.frequency
+      }))
+      
+      const data = await graphqlRequest(ANALYZE_SYMPTOMS, { 
+        symptoms: symptomsData,
+        memberId: null 
+      }, token)
+      
+      console.log('🔍 Symptom analysis result:', data)
+      
+      const result = data.analyzeSymptoms
+      const analysisData = result.analysis || {}
+      const conditions = result.conditions || []
+      const symptoms = Array.isArray(result.symptoms) ? result.symptoms : symptomsData
+      
+      const formattedAnalysis: SymptomAnalysis = {
+        id: result.id,
         symptoms: selectedSymptoms,
-        possibleConditions: [
-          {
-            name: 'Common Cold',
-            probability: 85,
-            description: 'Viral upper respiratory infection',
-            urgency: 'low',
-            recommendations: ['Rest and hydration', 'Over-the-counter cold medicine', 'Warm liquids']
-          },
-          {
-            name: 'Swine Flu',
-            probability: 60,
-            description: 'Influenza A (H1N1) like illness with symptoms such as fever, cough and body aches',
-            urgency: 'medium',
-            recommendations: ['Consider antiviral if within 48 hours', 'Rest and fluids', 'Monitor temperature and breathing']
-          }
-        ],
-        generalRecommendations: [
+        possibleConditions: Array.isArray(conditions) ? conditions.map((cond: any) => ({
+          name: cond.name || 'Unknown Condition',
+          probability: cond.probability || 50,
+          description: cond.description || '',
+          urgency: cond.urgency || 'medium' as const,
+          recommendations: cond.recommendations || []
+        })) : [],
+        generalRecommendations: analysisData.recommendations || [
           'Get adequate rest',
           'Stay hydrated',
           'Monitor symptoms for changes',
-          'Consider over-the-counter symptom relief',
           'Seek medical attention if symptoms persist or worsen'
         ],
-        urgencyLevel: 'medium',
-        analysisDate: new Date().toISOString(),
-        familyMemberId: 'divya-001',
-        familyMemberName: 'Divya'
+        urgencyLevel: result.urgencyLevel || 'medium' as const,
+        analysisDate: result.createdAt,
+        familyMemberId: result.memberId || '',
+        familyMemberName: result.member?.name || 'Self'
       }
 
-      setAnalysis(mockAnalysis)
-      setAnalysisHistory([mockAnalysis, ...analysisHistory])
+      setAnalysis(formattedAnalysis)
+      setAnalysisHistory([formattedAnalysis, ...analysisHistory])
+      
+      // Clear selected symptoms after analysis
+      setSelectedSymptoms([])
       
     } catch (error) {
       console.error('Error analyzing symptoms:', error)
       alert('Error analyzing symptoms. Please try again.')
     } finally {
       setLoading(false)
+    }
+  }
+
+  const handleDeleteAnalysis = async (id: string) => {
+    if (!user) return
+    
+    try {
+      const token = await getToken()
+      if (!token) {
+        throw new Error('No authentication token available')
+      }
+      
+      await graphqlRequest(DELETE_SYMPTOM_ANALYSIS, { id }, token)
+      
+      // Remove from local state
+      setAnalysisHistory(prev => prev.filter(a => a.id !== id))
+      if (analysis?.id === id) {
+        setAnalysis(null)
+      }
+      
+      console.log('✅ Symptom analysis deleted:', id)
+    } catch (error) {
+      console.error('Error deleting symptom analysis:', error)
+      alert('Failed to delete analysis. Please try again.')
     }
   }
 

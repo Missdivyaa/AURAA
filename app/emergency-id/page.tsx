@@ -2,7 +2,9 @@
 
 import { useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
+import { useUser, useAuth } from '@clerk/nextjs'
 import Navigation from '@/components/Navigation'
+import { graphqlRequest } from '@/lib/graphql-client'
 import { 
   QrCode, 
   Download, 
@@ -76,16 +78,20 @@ interface EmergencyData {
 }
 
 export default function EmergencyID() {
+  const { isSignedIn, user, isLoaded } = useUser()
+  const { getToken } = useAuth()
   const [familyMembers, setFamilyMembers] = useState<FamilyMember[]>([])
   const [emergencyData, setEmergencyData] = useState<EmergencyData[]>([])
-  const [selectedMember, setSelectedMember] = useState<string>('divya-001')
+  const [selectedMember, setSelectedMember] = useState<string>('')
   const [showQRModal, setShowQRModal] = useState(false)
   const [loading, setLoading] = useState(true)
   const [showDropdown, setShowDropdown] = useState(false)
 
   useEffect(() => {
-    loadFamilyMembers()
-  }, [])
+    if (isLoaded && isSignedIn && user) {
+      loadFamilyMembers()
+    }
+  }, [isLoaded, isSignedIn, user])
 
   useEffect(() => {
     if (familyMembers.length > 0) {
@@ -94,40 +100,60 @@ export default function EmergencyID() {
   }, [familyMembers])
 
   const loadFamilyMembers = async () => {
+    if (!user) return
+    
     try {
-      // Load real family members from backend
-      const response = await fetch('/api/family-members?userId=demo-user-123')
-      if (response.ok) {
-        const membersData = await response.json()
-        console.log('🏥 Emergency ID: Loaded family members:', membersData)
-        
-        // Convert backend data to frontend format
-        const formattedMembers: FamilyMember[] = membersData.map((member: any) => ({
-          id: member.id,
-          name: member.name,
-          age: calculateAge(member.dob),
-          relationship: member.relationship,
-          avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(member.name)}&background=random`,
-          healthScore: calculateHealthScore(member),
-          lastCheckup: new Date(member.createdAt).toISOString(),
-          nextAppointment: member.nextAppointment || '',
-          medications: Array.isArray(member.medications) ? member.medications.length : 0,
-          conditions: Array.isArray(member.conditions) ? member.conditions : [],
-          allergies: Array.isArray(member.allergies) ? member.allergies : [],
-          emergencyContacts: member.emergencyContacts || {},
-          insurance: member.insurance || {},
-          doctor: member.doctor || {},
-          bloodType: member.bloodType || 'Unknown',
-          status: 'good' as const
-        }))
-        
-        setFamilyMembers(formattedMembers)
-        if (formattedMembers.length > 0) {
-          setSelectedMember(formattedMembers[0].id)
+      // Get Clerk token
+      const token = await getToken()
+      if (!token) {
+        throw new Error('No authentication token available')
+      }
+      
+      // Load family members from GraphQL
+      const GET_FAMILY_MEMBERS = `
+        query GetFamilyMembers {
+          familyMembers {
+            id
+            name
+            dob
+            relationship
+            bloodType
+            conditions
+            allergies
+            emergencyContacts
+            insurance
+            doctor
+            createdAt
+          }
         }
-      } else {
-        console.error('Failed to load family members from backend')
-        setFamilyMembers([])
+      `
+      
+      const data = await graphqlRequest(GET_FAMILY_MEMBERS, {}, token)
+      console.log('🏥 Emergency ID: Loaded family members from GraphQL:', data)
+      
+      // Convert backend data to frontend format
+      const formattedMembers: FamilyMember[] = (data.familyMembers || []).map((member: any) => ({
+        id: member.id,
+        name: member.name,
+        age: calculateAge(member.dob),
+        relationship: member.relationship,
+        avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(member.name)}&background=random`,
+        healthScore: calculateHealthScore(member),
+        lastCheckup: new Date(member.createdAt).toISOString(),
+        nextAppointment: '',
+        medications: 0, // Will be loaded separately
+        conditions: Array.isArray(member.conditions) ? member.conditions : [],
+        allergies: Array.isArray(member.allergies) ? member.allergies : [],
+        emergencyContacts: member.emergencyContacts || {},
+        insurance: member.insurance || {},
+        doctor: member.doctor || {},
+        bloodType: member.bloodType || 'Unknown',
+        status: 'good' as const
+      }))
+      
+      setFamilyMembers(formattedMembers)
+      if (formattedMembers.length > 0) {
+        setSelectedMember(formattedMembers[0].id)
       }
     } catch (error) {
       console.error('Error loading family members:', error)
@@ -161,22 +187,38 @@ export default function EmergencyID() {
   }
 
   const loadEmergencyData = async () => {
+    if (!user) return
+    
     try {
       setLoading(true)
       
-      // Load medications from backend
-      const medicationsResponse = await fetch('/api/medications?userId=demo-user-123')
-      let medicationsData: any[] = []
-      if (medicationsResponse.ok) {
-        medicationsData = await medicationsResponse.json()
-        console.log('💊 Emergency ID: Loaded medications:', medicationsData)
+      // Get Clerk token
+      const token = await getToken()
+      if (!token) {
+        throw new Error('No authentication token available')
       }
+      
+      // Load medications from GraphQL
+      const GET_MEDICATIONS = `
+        query GetMedications {
+          medications {
+            id
+            name
+            dosage
+            memberId
+          }
+        }
+      `
+      
+      const medicationsData = await graphqlRequest(GET_MEDICATIONS, {}, token)
+      const medications = medicationsData.medications || []
+      console.log('💊 Emergency ID: Loaded medications from GraphQL:', medications)
       
       // Generate emergency data from family members and medications
       const emergencyDataList: EmergencyData[] = familyMembers.map((member) => {
         // Get medications for this family member
-        const memberMedications = medicationsData.filter(med => med.memberId === member.id)
-        const medicationNames = memberMedications.map(med => `${med.name} ${med.dosage}`)
+        const memberMedications = medications.filter((med: any) => med.memberId === member.id)
+        const medicationNames = memberMedications.map((med: any) => `${med.name} ${med.dosage}`)
         
         // Parse emergency contacts from member data
         const emergencyContacts = []

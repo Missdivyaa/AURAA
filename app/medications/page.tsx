@@ -3,7 +3,9 @@
 import { useEffect, useState } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
 import { motion } from 'framer-motion'
+import { useUser, useAuth } from '@clerk/nextjs'
 import Navigation from '@/components/Navigation'
+import { graphqlRequest } from '@/lib/graphql-client'
 import { 
   Pill, 
   Plus, 
@@ -59,18 +61,59 @@ interface MedicationReminder {
   date: string
 }
 
+// GraphQL Queries and Mutations
+const GET_MEDICATIONS = `
+  query GetMedications {
+    medications {
+      id
+      name
+      dosage
+      frequency
+      startDate
+      endDate
+      sideEffects
+      status
+      memberId
+      member {
+        id
+        name
+      }
+    }
+  }
+`
+
+const DELETE_MEDICATION = `
+  mutation DeleteMedication($id: ID!) {
+    deleteMedication(id: $id)
+  }
+`
+
+const MARK_MEDICATION_COMPLETED = `
+  mutation MarkMedicationCompleted($id: ID!) {
+    markMedicationCompleted(id: $id) {
+      id
+      status
+    }
+  }
+`
+
 export default function Medications() {
   const searchParams = useSearchParams()
   const router = useRouter()
+  const { isSignedIn, user, isLoaded } = useUser()
+  const { getToken } = useAuth()
   const [medications, setMedications] = useState<Medication[]>([])
   const [reminders, setReminders] = useState<MedicationReminder[]>([])
   const [loading, setLoading] = useState(true)
   const [activeTab, setActiveTab] = useState('medications')
   const [searchTerm, setSearchTerm] = useState('')
   const [filterStatus, setFilterStatus] = useState('all')
+  const [editingMedication, setEditingMedication] = useState<Medication | null>(null)
 
   useEffect(() => {
-    loadMedications()
+    if (isLoaded && isSignedIn && user) {
+      loadMedications()
+    }
     if (searchParams.get('action') === 'create') {
       // Redirect to add medication page instead of showing modal
       const memberId = searchParams.get('memberId')
@@ -80,54 +123,97 @@ export default function Medications() {
         router.push('/medications/add')
       }
     }
-  }, [searchParams, router])
+  }, [searchParams, router, isLoaded, isSignedIn, user])
 
   const loadMedications = async () => {
+    if (!user) return
+    
     try {
       setLoading(true)
       
-      // Load real medications from backend
-      const response = await fetch('/api/medications?userId=demo-user-123')
-      if (response.ok) {
-        const medicationsData = await response.json()
-        console.log('📋 Loaded medications from backend:', medicationsData)
-        
-        // Convert backend data to frontend format
-        const formattedMedications: Medication[] = medicationsData.map((med: any) => ({
-          id: med.id,
-          name: med.name,
-          dosage: med.dosage,
-          frequency: med.frequency,
-          timing: [], // TODO: Add timing data
-          startDate: med.startDate,
-          endDate: med.endDate,
-          prescribedBy: 'Dr. Unknown', // TODO: Add prescribedBy to backend
-          purpose: 'General purpose', // TODO: Add purpose to backend
-          sideEffects: med.sideEffects || [],
-          familyMemberId: med.memberId || '',
-          familyMemberName: 'Unknown Member', // TODO: Get member name
-          status: med.status as 'active' | 'completed' | 'discontinued',
-          reminders: [], // TODO: Add reminders data
-          adherence: 90, // TODO: Calculate real adherence
-          lastTaken: undefined,
-          nextDose: undefined
-        }))
-        
-        setMedications(formattedMedications)
-      } else {
-        console.error('Failed to load medications from backend')
-        // Fallback to empty array
-        setMedications([])
+      // Get Clerk token
+      const token = await getToken()
+      if (!token) {
+        throw new Error('No authentication token available')
       }
       
-      // Mock reminders data for now (TODO: Load from backend)
-      const mockReminders: MedicationReminder[] = []
-      setReminders(mockReminders)
+      // Fetch medications from GraphQL API
+      const data = await graphqlRequest(GET_MEDICATIONS, {}, token)
+      console.log('📋 Loaded medications from GraphQL:', data)
+      
+      // Convert backend data to frontend format
+      const formattedMedications: Medication[] = (data.medications || []).map((med: any) => ({
+        id: med.id,
+        name: med.name,
+        dosage: med.dosage,
+        frequency: med.frequency,
+        timing: [], // Can be derived from frequency
+        startDate: med.startDate,
+        endDate: med.endDate || undefined,
+        prescribedBy: 'Dr. Unknown', // Not in schema yet
+        purpose: 'General purpose', // Not in schema yet
+        sideEffects: Array.isArray(med.sideEffects) ? med.sideEffects : [],
+        familyMemberId: med.memberId || '',
+        familyMemberName: med.member?.name || 'Self',
+        status: med.status as 'active' | 'completed' | 'discontinued',
+        reminders: [], // Can be loaded separately from reminders query
+        adherence: 90, // Would need to calculate from history
+        lastTaken: undefined,
+        nextDose: undefined
+      }))
+      
+      setMedications(formattedMedications)
+      setReminders([]) // Reminders can be loaded separately
       
     } catch (error) {
       console.error('Error loading medications:', error)
+      setMedications([])
     } finally {
       setLoading(false)
+    }
+  }
+
+  const handleDeleteMedication = async (id: string) => {
+    if (!user) return
+    
+    try {
+      const token = await getToken()
+      if (!token) {
+        throw new Error('No authentication token available')
+      }
+      
+      await graphqlRequest(DELETE_MEDICATION, { id }, token)
+      
+      // Remove from local state
+      setMedications(prev => prev.filter(m => m.id !== id))
+      
+      console.log('✅ Medication deleted:', id)
+    } catch (error) {
+      console.error('Error deleting medication:', error)
+      alert('Failed to delete medication. Please try again.')
+    }
+  }
+
+  const handleMarkAsTaken = async (id: string) => {
+    if (!user) return
+    
+    try {
+      const token = await getToken()
+      if (!token) {
+        throw new Error('No authentication token available')
+      }
+      
+      const data = await graphqlRequest(MARK_MEDICATION_COMPLETED, { id }, token)
+      
+      // Update local state
+      setMedications(prev => prev.map(m => 
+        m.id === id ? { ...m, status: 'completed' as const } : m
+      ))
+      
+      console.log('✅ Medication marked as completed:', id)
+    } catch (error) {
+      console.error('Error marking medication as taken:', error)
+      alert('Failed to update medication. Please try again.')
     }
   }
 
@@ -312,10 +398,20 @@ export default function Medications() {
                           </div>
                         </div>
                         <div className="flex space-x-1">
-                          <button className="p-2 text-gray-400 hover:text-blue-600 transition-colors">
+                          <button 
+                            onClick={() => router.push(`/medications/add?id=${medication.id}`)}
+                            className="p-2 text-gray-400 hover:text-blue-600 transition-colors"
+                          >
                             <Edit className="w-4 h-4" />
                           </button>
-                          <button className="p-2 text-gray-400 hover:text-red-600 transition-colors">
+                          <button 
+                            onClick={() => {
+                              if (confirm('Are you sure you want to delete this medication?')) {
+                                handleDeleteMedication(medication.id)
+                              }
+                            }}
+                            className="p-2 text-gray-400 hover:text-red-600 transition-colors"
+                          >
                             <Trash2 className="w-4 h-4" />
                           </button>
                         </div>
@@ -342,10 +438,18 @@ export default function Medications() {
                       </div>
 
                       <div className="flex space-x-2 text-sm">
-                        <button className="flex-1 py-2 px-3 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors">
-                          Mark as Taken
-                        </button>
-                        <button className="flex-1 py-2 px-3 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors">
+                        {medication.status === 'active' && (
+                          <button 
+                            onClick={() => handleMarkAsTaken(medication.id)}
+                            className="flex-1 py-2 px-3 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors"
+                          >
+                            Mark as Taken
+                          </button>
+                        )}
+                        <button 
+                          onClick={() => router.push(`/reminders?medicationId=${medication.id}`)}
+                          className="flex-1 py-2 px-3 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors"
+                        >
                           Edit Reminders
                         </button>
                       </div>

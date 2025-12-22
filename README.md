@@ -54,45 +54,76 @@ A comprehensive healthcare platform that combines AI insights, family health tra
 ### Prerequisites
 - Node.js 18+ 
 - PostgreSQL 15+
-- OpenAI API key
-- Anthropic API key
+- Clerk account (for authentication) - Sign up at [clerk.com](https://clerk.com)
 
 ### Installation
 
-1. **Clone Repository**
+1. **Install Dependencies**
    ```bash
-   git clone <repository-url>
-   cd sih
+   # Frontend
+   npm install
+   
+   # Backend
+   cd backend
+   npm install
+   cd ..
    ```
 
-2. **Install Dependencies**
-   ```bash
-   npm install
-   ```
+2. **Set Up Clerk Authentication**
+   - Sign up at [clerk.com](https://clerk.com)
+   - Create a new application
+   - Get your Publishable Key and Secret Key
 
 3. **Environment Setup**
-   ```bash
-   cp env.example .env.local
-   # Edit .env.local with your configuration
+   
+   **Frontend** (`.env.local` in root):
+   ```env
+   NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY="pk_test_..."
+   CLERK_SECRET_KEY="sk_test_..."
+   NEXT_PUBLIC_GRAPHQL_ENDPOINT="http://localhost:4000/graphql"
+   ```
+   
+   **Backend** (`backend/.env`):
+   ```env
+   DATABASE_URL="postgresql://user:pass@localhost:5432/auraa_health_db"
+   CLERK_SECRET_KEY="sk_test_..."
+   CLERK_PUBLISHABLE_KEY="pk_test_..."
+   PORT=4000
+   CORS_ORIGIN="http://localhost:3000"
    ```
 
 4. **Database Setup**
    ```bash
-   # Start PostgreSQL
    # Create database
    createdb auraa_health_db
    
-   # Run schema
-   psql -d auraa_health_db -f database/schema.sql
+   # Initialize backend database
+   cd backend
+   npm run db:generate
+   npm run db:migrate
+   cd ..
    ```
 
-5. **Start Development Server**
+5. **Start Development Servers**
+   
+   **Terminal 1 - Backend:**
+   ```bash
+   cd backend
+   npm run dev
+   ```
+   
+   **Terminal 2 - Frontend:**
    ```bash
    npm run dev
    ```
 
 6. **Access Application**
-   Open [http://localhost:3000](http://localhost:3000)
+   - Open [http://localhost:3000](http://localhost:3000)
+   - You'll be redirected to login page
+   - Sign up for a new account
+   - Start using AURAA!
+
+**For detailed setup instructions, see [SETUP_GUIDE.md](./SETUP_GUIDE.md)**
 
 ## 🔧 Configuration
 

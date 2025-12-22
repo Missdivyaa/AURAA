@@ -3,7 +3,9 @@
 import { useEffect, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { motion } from 'framer-motion'
+import { useUser, useAuth } from '@clerk/nextjs'
 import Navigation from '@/components/Navigation'
+import { graphqlRequest } from '@/lib/graphql-client'
 import { 
   Bell, 
   Plus, 
@@ -62,8 +64,69 @@ interface ReminderStats {
   today: number
 }
 
+// GraphQL Queries and Mutations
+const GET_REMINDERS = `
+  query GetReminders {
+    reminders {
+      id
+      title
+      description
+      type
+      date
+      time
+      frequency
+      priority
+      status
+      notifications
+      memberId
+      member {
+        id
+        name
+      }
+      createdAt
+    }
+  }
+`
+
+const CREATE_REMINDER = `
+  mutation CreateReminder($input: CreateReminderInput!) {
+    createReminder(input: $input) {
+      id
+      title
+      description
+      type
+      date
+      time
+      frequency
+      priority
+      status
+      member {
+        id
+        name
+      }
+    }
+  }
+`
+
+const DELETE_REMINDER = `
+  mutation DeleteReminder($id: ID!) {
+    deleteReminder(id: $id)
+  }
+`
+
+const MARK_REMINDER_COMPLETED = `
+  mutation MarkReminderCompleted($id: ID!) {
+    markReminderCompleted(id: $id) {
+      id
+      status
+    }
+  }
+`
+
 export default function Reminders() {
   const searchParams = useSearchParams()
+  const { isSignedIn, user, isLoaded } = useUser()
+  const { getToken } = useAuth()
   const [reminders, setReminders] = useState<Reminder[]>([])
   const [stats, setStats] = useState<ReminderStats>({
     total: 0,
@@ -113,26 +176,103 @@ export default function Reminders() {
   })
 
   useEffect(() => {
-    loadReminders()
+    if (isLoaded && isSignedIn && user) {
+      loadReminders()
+    }
     
     // Check for URL parameter to open add reminder modal
     const actionParam = searchParams.get('action')
     if (actionParam === 'create') {
       setShowAddModal(true)
     }
-  }, [searchParams])
+  }, [searchParams, isLoaded, isSignedIn, user])
 
-  const addReminder = async () => {
+  const loadReminders = async () => {
+    if (!user) return
+    
     try {
-      const reminder: Reminder = {
-        id: Date.now().toString(),
-        ...newReminder,
-        familyMemberName: 'Divya', // Default for now
-        status: 'active',
-        createdAt: new Date().toISOString()
+      setLoading(true)
+      
+      // Get Clerk token
+      const token = await getToken()
+      if (!token) {
+        throw new Error('No authentication token available')
       }
       
-      setReminders(prev => [reminder, ...prev])
+      // Fetch reminders from GraphQL API
+      const data = await graphqlRequest(GET_REMINDERS, {}, token)
+      console.log('🔔 Loaded reminders from GraphQL:', data)
+      
+      // Convert backend data to frontend format
+      const formattedReminders: Reminder[] = (data.reminders || []).map((rem: any) => ({
+        id: rem.id,
+        title: rem.title,
+        type: rem.type as 'medication' | 'appointment' | 'checkup' | 'exercise' | 'measurement' | 'other',
+        description: rem.description || '',
+        time: rem.time,
+        date: new Date(rem.date).toISOString().split('T')[0],
+        frequency: rem.frequency as 'once' | 'daily' | 'weekly' | 'monthly',
+        familyMemberId: rem.memberId || '',
+        familyMemberName: rem.member?.name || 'Self',
+        status: rem.status as 'active' | 'completed' | 'snoozed' | 'missed',
+        priority: rem.priority as 'low' | 'medium' | 'high',
+        notifications: rem.notifications || { push: true, email: false, sms: false },
+        createdAt: rem.createdAt,
+        completedAt: rem.status === 'completed' ? new Date().toISOString() : undefined
+      }))
+      
+      // Calculate stats
+      const today = new Date().toISOString().split('T')[0]
+      const todayReminders = formattedReminders.filter(r => r.date === today)
+      
+      const calculatedStats: ReminderStats = {
+        total: formattedReminders.length,
+        active: formattedReminders.filter(r => r.status === 'active').length,
+        completed: formattedReminders.filter(r => r.status === 'completed').length,
+        missed: formattedReminders.filter(r => r.status === 'missed').length,
+        today: todayReminders.length
+      }
+
+      setReminders(formattedReminders)
+      setStats(calculatedStats)
+      
+    } catch (error) {
+      console.error('Error loading reminders:', error)
+      setReminders([])
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const addReminder = async () => {
+    if (!user) return
+    
+    try {
+      const token = await getToken()
+      if (!token) {
+        throw new Error('No authentication token available')
+      }
+      
+      // Prepare input for GraphQL mutation
+      const input = {
+        memberId: newReminder.familyMemberId || null,
+        title: newReminder.title,
+        description: newReminder.description,
+        type: newReminder.type,
+        date: new Date(newReminder.date).toISOString(),
+        time: newReminder.time,
+        frequency: newReminder.frequency,
+        priority: newReminder.priority,
+        notifications: newReminder.notifications
+      }
+      
+      const data = await graphqlRequest(CREATE_REMINDER, { input }, token)
+      console.log('✅ Reminder created:', data)
+      
+      // Reload reminders
+      await loadReminders()
+      
+      // Reset form
       setShowAddModal(false)
       setNewReminder({
         title: '',
@@ -151,152 +291,86 @@ export default function Reminders() {
       })
     } catch (error) {
       console.error('Error adding reminder:', error)
+      alert('Failed to create reminder. Please try again.')
+    }
+  }
+
+  const handleDeleteReminder = async (id: string) => {
+    if (!user) return
+    
+    try {
+      const token = await getToken()
+      if (!token) {
+        throw new Error('No authentication token available')
+      }
+      
+      await graphqlRequest(DELETE_REMINDER, { id }, token)
+      
+      // Remove from local state
+      setReminders(prev => prev.filter(r => r.id !== id))
+      
+      // Recalculate stats
+      const today = new Date().toISOString().split('T')[0]
+      const updatedReminders = reminders.filter(r => r.id !== id)
+      const todayReminders = updatedReminders.filter(r => r.date === today)
+      
+      setStats({
+        total: updatedReminders.length,
+        active: updatedReminders.filter(r => r.status === 'active').length,
+        completed: updatedReminders.filter(r => r.status === 'completed').length,
+        missed: updatedReminders.filter(r => r.status === 'missed').length,
+        today: todayReminders.length
+      })
+      
+      console.log('✅ Reminder deleted:', id)
+    } catch (error) {
+      console.error('Error deleting reminder:', error)
+      alert('Failed to delete reminder. Please try again.')
+    }
+  }
+
+  const handleMarkCompleted = async (id: string) => {
+    if (!user) return
+    
+    try {
+      const token = await getToken()
+      if (!token) {
+        throw new Error('No authentication token available')
+      }
+      
+      const data = await graphqlRequest(MARK_REMINDER_COMPLETED, { id }, token)
+      
+      // Update local state
+      setReminders(prev => prev.map(r => 
+        r.id === id ? { ...r, status: 'completed' as const, completedAt: new Date().toISOString() } : r
+      ))
+      
+      // Recalculate stats
+      const today = new Date().toISOString().split('T')[0]
+      const updatedReminders = reminders.map(r => 
+        r.id === id ? { ...r, status: 'completed' as const } : r
+      )
+      const todayReminders = updatedReminders.filter(r => r.date === today)
+      
+      setStats({
+        total: updatedReminders.length,
+        active: updatedReminders.filter(r => r.status === 'active').length,
+        completed: updatedReminders.filter(r => r.status === 'completed').length,
+        missed: updatedReminders.filter(r => r.status === 'missed').length,
+        today: todayReminders.length
+      })
+      
+      console.log('✅ Reminder marked as completed:', id)
+    } catch (error) {
+      console.error('Error marking reminder as completed:', error)
+      alert('Failed to update reminder. Please try again.')
     }
   }
   
   const updateSettings = () => {
-    // Save settings logic here
+    // Save settings logic here (can be stored in localStorage or backend)
+    localStorage.setItem('reminderSettings', JSON.stringify(settings))
     setShowSettingsModal(false)
-  }
-
-  const loadReminders = async () => {
-    try {
-      setLoading(true)
-      
-      // Simulate loading delay
-      await new Promise(resolve => setTimeout(resolve, 1000))
-      
-      // Mock reminders data
-      const mockReminders: Reminder[] = [
-        {
-          id: '1',
-          title: 'Take Lisinopril',
-          type: 'medication',
-          description: 'Blood pressure medication - 10mg',
-          time: '08:00',
-          date: '2024-01-16',
-          frequency: 'daily',
-          familyMemberId: 'divya-001',
-          familyMemberName: 'Divya',
-          status: 'active',
-          priority: 'high',
-          notifications: { push: true, email: false, sms: true },
-          createdAt: '2024-01-01T00:00:00Z'
-        },
-        {
-          id: '2',
-          title: 'Take Metformin',
-          type: 'medication',
-          description: 'Diabetes medication - 500mg',
-          time: '08:00',
-          date: '2024-01-16',
-          frequency: 'daily',
-          familyMemberId: 'divya-001',
-          familyMemberName: 'Divya',
-          status: 'completed',
-          priority: 'high',
-          notifications: { push: true, email: false, sms: true },
-          createdAt: '2024-01-01T00:00:00Z',
-          completedAt: '2024-01-16T08:05:00Z'
-        },
-        {
-          id: '3',
-          title: 'Evening Metformin',
-          type: 'medication',
-          description: 'Diabetes medication - 500mg',
-          time: '20:00',
-          date: '2024-01-16',
-          frequency: 'daily',
-          familyMemberId: 'divya-001',
-          familyMemberName: 'Divya',
-          status: 'active',
-          priority: 'high',
-          notifications: { push: true, email: false, sms: true },
-          createdAt: '2024-01-01T00:00:00Z'
-        },
-        {
-          id: '4',
-          title: 'Blood Pressure Check',
-          type: 'measurement',
-          description: 'Daily blood pressure monitoring',
-          time: '09:00',
-          date: '2024-01-16',
-          frequency: 'daily',
-          familyMemberId: 'divya-001',
-          familyMemberName: 'Divya',
-          status: 'active',
-          priority: 'medium',
-          notifications: { push: true, email: false, sms: false },
-          createdAt: '2024-01-10T00:00:00Z'
-        },
-        {
-          id: '5',
-          title: 'Doctor Appointment',
-          type: 'appointment',
-          description: 'Annual physical examination with Dr. Sarah Johnson',
-          time: '10:00',
-          date: '2024-01-20',
-          frequency: 'once',
-          familyMemberId: 'divya-001',
-          familyMemberName: 'Divya',
-          status: 'active',
-          priority: 'high',
-          notifications: { push: true, email: true, sms: true },
-          createdAt: '2024-01-08T00:00:00Z'
-        },
-        {
-          id: '6',
-          title: 'Exercise Routine',
-          type: 'exercise',
-          description: '30 minutes of cardio exercise',
-          time: '18:00',
-          date: '2024-01-16',
-          frequency: 'daily',
-          familyMemberId: 'tushar-002',
-          familyMemberName: 'Tushar',
-          status: 'active',
-          priority: 'medium',
-          notifications: { push: true, email: false, sms: false },
-          createdAt: '2024-01-01T00:00:00Z'
-        },
-        {
-          id: '7',
-          title: 'Vitamin D3',
-          type: 'medication',
-          description: 'Vitamin supplement - 1000 IU',
-          time: '09:00',
-          date: '2024-01-16',
-          frequency: 'daily',
-          familyMemberId: 'tushar-002',
-          familyMemberName: 'Tushar',
-          status: 'completed',
-          priority: 'low',
-          notifications: { push: true, email: false, sms: false },
-          createdAt: '2024-01-10T00:00:00Z',
-          completedAt: '2024-01-16T09:10:00Z'
-        }
-      ]
-
-      // Calculate stats
-      const today = new Date().toISOString().split('T')[0]
-      const todayReminders = mockReminders.filter(r => r.date === today)
-      
-      const calculatedStats: ReminderStats = {
-        total: mockReminders.length,
-        active: mockReminders.filter(r => r.status === 'active').length,
-        completed: mockReminders.filter(r => r.status === 'completed').length,
-        missed: mockReminders.filter(r => r.status === 'missed').length,
-        today: todayReminders.length
-      }
-
-      setReminders(mockReminders)
-      setStats(calculatedStats)
-      
-    } catch (error) {
-      console.error('Error loading reminders:', error)
-    } finally {
-      setLoading(false)
-    }
   }
 
   const getTypeIcon = (type: string) => {
@@ -586,12 +660,28 @@ export default function Reminders() {
                             </div>
                           </div>
                           
-                          {/* Three-dot menu */}
-                          <div className="relative">
-                            <button className="p-2 text-gray-400 hover:text-gray-600 transition-colors">
-                              <MoreVertical className="w-4 h-4" />
+                          {/* Action buttons */}
+                          <div className="flex items-center space-x-2">
+                            {reminder.status === 'active' && (
+                              <button 
+                                onClick={() => handleMarkCompleted(reminder.id)}
+                                className="p-2 text-gray-400 hover:text-green-600 transition-colors"
+                                title="Mark as completed"
+                              >
+                                <CheckCircle className="w-4 h-4" />
+                              </button>
+                            )}
+                            <button 
+                              onClick={() => {
+                                if (confirm('Are you sure you want to delete this reminder?')) {
+                                  handleDeleteReminder(reminder.id)
+                                }
+                              }}
+                              className="p-2 text-gray-400 hover:text-red-600 transition-colors"
+                              title="Delete reminder"
+                            >
+                              <Trash2 className="w-4 h-4" />
                             </button>
-                            {/* Dropdown menu would go here */}
                           </div>
                         </div>
                       </motion.div>

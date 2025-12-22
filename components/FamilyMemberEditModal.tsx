@@ -43,7 +43,7 @@ interface FamilyMemberEditModalProps {
   member: FamilyMember
   isOpen: boolean
   onClose: () => void
-  onSave: (updatedMember: FamilyMember) => void
+  onSave: (updatedMember: FamilyMember) => Promise<void>
 }
 
 export default function FamilyMemberEditModal({ member, isOpen, onClose, onSave }: FamilyMemberEditModalProps) {
@@ -67,9 +67,14 @@ export default function FamilyMemberEditModal({ member, isOpen, onClose, onSave 
     }))
   }, [editedMember.conditions, editedMember.medications, editedMember.age, editedMember.lastCheckup, editedMember.nextAppointment])
 
-  const handleSave = () => {
-    onSave(editedMember)
-    onClose()
+  const handleSave = async () => {
+    try {
+      await onSave(editedMember)
+      onClose()
+    } catch (error) {
+      console.error('Error saving member:', error)
+      // Don't close the modal if there's an error
+    }
   }
 
   // Medication management is simplified to a single count field on the Basic tab.

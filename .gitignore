@@ -38,3 +38,14 @@ coverage/
 # Build artifacts
 build/
 dist/
+
+# Documentation files (local setup guides - don't push to GitHub)
+IMPLEMENTATION_SUMMARY.md
+QUICK_START.md
+SETUP_GUIDE.md
+FEATURE_STATUS.md
+BACKEND_INTEGRATION_COMPLETE.md
+
+# Ignore all markdown docs except the main README
+*.md
+!README.md

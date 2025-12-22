@@ -2,7 +2,9 @@
 
 import { useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
+import { useUser, useAuth } from '@clerk/nextjs'
 import Navigation from '@/components/Navigation'
+import { graphqlRequest } from '@/lib/graphql-client'
 import { 
   Watch, 
   Heart, 
@@ -55,147 +57,223 @@ interface HealthMetric {
   trend: 'up' | 'down' | 'stable'
 }
 
+// GraphQL Queries and Mutations
+const GET_WEARABLE_DATA = `
+  query GetWearableData {
+    wearableData {
+      id
+      deviceType
+      data
+      syncedAt
+      status
+      memberId
+      member {
+        id
+        name
+      }
+      createdAt
+    }
+  }
+`
+
+const SYNC_WEARABLE_DATA = `
+  mutation SyncWearableData($input: SyncWearableDataInput!) {
+    syncWearableData(input: $input) {
+      id
+      deviceType
+      data
+      syncedAt
+      status
+    }
+  }
+`
+
 export default function Wearables() {
+  const { isSignedIn, user, isLoaded } = useUser()
+  const { getToken } = useAuth()
   const [devices, setDevices] = useState<WearableDevice[]>([])
   const [metrics, setMetrics] = useState<HealthMetric[]>([])
   const [loading, setLoading] = useState(true)
   const [activeTab, setActiveTab] = useState('devices')
 
   useEffect(() => {
-    loadWearableData()
-  }, [])
+    if (isLoaded && isSignedIn && user) {
+      loadWearableData()
+    }
+  }, [isLoaded, isSignedIn, user])
 
   const loadWearableData = async () => {
+    if (!user) return
+    
     try {
       setLoading(true)
       
-      // Simulate loading delay
-      await new Promise(resolve => setTimeout(resolve, 1500))
+      const token = await getToken()
+      if (!token) {
+        throw new Error('No authentication token available')
+      }
       
-      // Mock wearable devices data
-      const mockDevices: WearableDevice[] = [
-        {
-          id: '1',
-          name: 'Apple Watch Series 9',
-          type: 'smartwatch',
-          brand: 'Apple',
-          model: 'Series 9',
-          batteryLevel: 85,
-          isConnected: true,
-          lastSync: '2024-01-15T10:30:00Z',
-          status: 'active',
+      // Fetch wearable data from GraphQL API
+      const data = await graphqlRequest(GET_WEARABLE_DATA, {}, token)
+      console.log('⌚ Loaded wearable data from GraphQL:', data)
+      
+      // Convert backend data to frontend format
+      const formattedDevices: WearableDevice[] = (data.wearableData || []).map((wearable: any) => {
+        const deviceData = wearable.data || {}
+        const deviceInfo = deviceData.device || {}
+        const metricsData = deviceData.metrics || {}
+        
+        return {
+          id: wearable.id,
+          name: deviceInfo.name || `${wearable.deviceType} Device`,
+          type: deviceInfo.type || 'smartwatch' as const,
+          brand: deviceInfo.brand || 'Unknown',
+          model: deviceInfo.model || '',
+          batteryLevel: deviceInfo.batteryLevel || 0,
+          isConnected: wearable.status === 'synced' || wearable.status === 'processed',
+          lastSync: wearable.syncedAt,
+          status: wearable.status === 'processed' ? 'active' as const :
+                  wearable.status === 'error' ? 'error' as const :
+                  'inactive' as const,
           metrics: {
-            heartRate: 72,
-            steps: 8542,
-            calories: 420,
-            sleep: 7.5
-          }
-        },
-        {
-          id: '2',
-          name: 'Fitbit Charge 5',
-          type: 'fitness-tracker',
-          brand: 'Fitbit',
-          model: 'Charge 5',
-          batteryLevel: 92,
-          isConnected: true,
-          lastSync: '2024-01-15T10:25:00Z',
-          status: 'active',
-          metrics: {
-            heartRate: 68,
-            steps: 12350,
-            calories: 580,
-            sleep: 8.2
-          }
-        },
-        {
-          id: '3',
-          name: 'Omron Blood Pressure Monitor',
-          type: 'blood-pressure',
-          brand: 'Omron',
-          model: 'HEM-7156',
-          batteryLevel: 100,
-          isConnected: false,
-          lastSync: '2024-01-14T18:45:00Z',
-          status: 'inactive',
-          metrics: {
-            bloodPressure: { systolic: 125, diastolic: 82 }
-          }
-        },
-        {
-          id: '4',
-          name: 'FreeStyle Libre 3',
-          type: 'glucose-monitor',
-          brand: 'Abbott',
-          model: 'FreeStyle Libre 3',
-          batteryLevel: 78,
-          isConnected: true,
-          lastSync: '2024-01-15T09:15:00Z',
-          status: 'active',
-          metrics: {
-            glucose: 95
+            heartRate: metricsData.heartRate,
+            steps: metricsData.steps,
+            calories: metricsData.calories,
+            sleep: metricsData.sleep,
+            bloodPressure: metricsData.bloodPressure ? {
+              systolic: metricsData.bloodPressure.systolic || 0,
+              diastolic: metricsData.bloodPressure.diastolic || 0
+            } : undefined,
+            glucose: metricsData.glucose
           }
         }
-      ]
-
-      const mockMetrics: HealthMetric[] = [
-        {
-          id: '1',
-          deviceId: '1',
-          deviceName: 'Apple Watch Series 9',
-          metric: 'Heart Rate',
-          value: 72,
-          unit: 'bpm',
-          timestamp: '2024-01-15T10:30:00Z',
-          trend: 'stable'
-        },
-        {
-          id: '2',
-          deviceId: '1',
-          deviceName: 'Apple Watch Series 9',
-          metric: 'Steps',
-          value: 8542,
-          unit: 'steps',
-          timestamp: '2024-01-15T10:30:00Z',
-          trend: 'up'
-        },
-        {
-          id: '3',
-          deviceId: '2',
-          deviceName: 'Fitbit Charge 5',
-          metric: 'Sleep',
-          value: 8.2,
-          unit: 'hours',
-          timestamp: '2024-01-15T08:00:00Z',
-          trend: 'up'
-        },
-        {
-          id: '4',
-          deviceId: '3',
-          deviceName: 'Omron Blood Pressure Monitor',
-          metric: 'Blood Pressure',
-          value: 125,
-          unit: 'mmHg',
-          timestamp: '2024-01-14T18:45:00Z',
-          trend: 'down'
-        },
-        {
-          id: '5',
-          deviceId: '4',
-          deviceName: 'FreeStyle Libre 3',
-          metric: 'Glucose',
-          value: 95,
-          unit: 'mg/dL',
-          timestamp: '2024-01-15T09:15:00Z',
-          trend: 'stable'
+      })
+      
+      // Extract metrics from wearable data
+      const formattedMetrics: HealthMetric[] = formattedDevices.flatMap(device => {
+        const deviceMetrics: HealthMetric[] = []
+        
+        if (device.metrics.heartRate) {
+          deviceMetrics.push({
+            id: `${device.id}-hr`,
+            deviceId: device.id,
+            deviceName: device.name,
+            metric: 'Heart Rate',
+            value: device.metrics.heartRate,
+            unit: 'bpm',
+            timestamp: device.lastSync,
+            trend: 'stable'
+          })
         }
-      ]
-
-      setDevices(mockDevices)
-      setMetrics(mockMetrics)
+        
+        if (device.metrics.steps) {
+          deviceMetrics.push({
+            id: `${device.id}-steps`,
+            deviceId: device.id,
+            deviceName: device.name,
+            metric: 'Steps',
+            value: device.metrics.steps,
+            unit: 'steps',
+            timestamp: device.lastSync,
+            trend: 'up'
+          })
+        }
+        
+        if (device.metrics.sleep) {
+          deviceMetrics.push({
+            id: `${device.id}-sleep`,
+            deviceId: device.id,
+            deviceName: device.name,
+            metric: 'Sleep',
+            value: device.metrics.sleep,
+            unit: 'hours',
+            timestamp: device.lastSync,
+            trend: 'stable'
+          })
+        }
+        
+        if (device.metrics.bloodPressure) {
+          deviceMetrics.push({
+            id: `${device.id}-bp`,
+            deviceId: device.id,
+            deviceName: device.name,
+            metric: 'Blood Pressure',
+            value: device.metrics.bloodPressure.systolic,
+            unit: 'mmHg',
+            timestamp: device.lastSync,
+            trend: 'stable'
+          })
+        }
+        
+        if (device.metrics.glucose) {
+          deviceMetrics.push({
+            id: `${device.id}-glucose`,
+            deviceId: device.id,
+            deviceName: device.name,
+            metric: 'Glucose',
+            value: device.metrics.glucose,
+            unit: 'mg/dL',
+            timestamp: device.lastSync,
+            trend: 'stable'
+          })
+        }
+        
+        return deviceMetrics
+      })
+      
+      setDevices(formattedDevices)
+      setMetrics(formattedMetrics)
       
     } catch (error) {
       console.error('Error loading wearable data:', error)
+      setDevices([])
+      setMetrics([])
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleSyncDevice = async (deviceType: string) => {
+    if (!user) return
+    
+    try {
+      setLoading(true)
+      
+      const token = await getToken()
+      if (!token) {
+        throw new Error('No authentication token available')
+      }
+      
+      // Mock device data for sync
+      const syncData = {
+        deviceType,
+        data: {
+          device: {
+            name: `${deviceType} Device`,
+            type: 'smartwatch',
+            brand: 'Unknown',
+            model: '',
+            batteryLevel: 85
+          },
+          metrics: {
+            heartRate: Math.floor(Math.random() * 40) + 60,
+            steps: Math.floor(Math.random() * 5000) + 5000,
+            calories: Math.floor(Math.random() * 200) + 300,
+            sleep: (Math.random() * 2 + 6).toFixed(1)
+          }
+        },
+        memberId: null
+      }
+      
+      await graphqlRequest(SYNC_WEARABLE_DATA, { input: syncData }, token)
+      
+      // Reload wearable data
+      await loadWearableData()
+      
+      console.log('✅ Wearable data synced:', deviceType)
+    } catch (error) {
+      console.error('Error syncing wearable data:', error)
+      alert('Failed to sync device. Please try again.')
     } finally {
       setLoading(false)
     }
@@ -266,11 +344,15 @@ export default function Wearables() {
                   className="inline-flex items-center px-4 py-3 bg-gray-600 text-white rounded-xl font-semibold hover:bg-gray-700 transition-colors shadow-lg disabled:opacity-50"
                 >
                   <RefreshCw className={`w-5 h-5 mr-2 ${loading ? 'animate-spin' : ''}`} />
-                  Sync All
+                  Refresh
                 </button>
-                <button className="inline-flex items-center px-6 py-3 bg-primary-600 text-white rounded-xl font-semibold hover:bg-primary-700 transition-colors shadow-lg">
+                <button 
+                  onClick={() => handleSyncDevice('apple_watch')}
+                  disabled={loading}
+                  className="inline-flex items-center px-6 py-3 bg-primary-600 text-white rounded-xl font-semibold hover:bg-primary-700 transition-colors shadow-lg disabled:opacity-50"
+                >
                   <Plus className="w-5 h-5 mr-2" />
-                  Add Device
+                  Sync Device
                 </button>
               </div>
             </div>

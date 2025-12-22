@@ -3,8 +3,10 @@
 import { useEffect, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { motion } from 'framer-motion'
+import { useUser, useAuth } from '@clerk/nextjs'
 import Navigation from '@/components/Navigation'
 import SmartInsights from '@/components/SmartInsights'
+import { graphqlRequest } from '@/lib/graphql-client'
 import { 
   Brain, 
   TrendingUp, 
@@ -71,8 +73,57 @@ interface SymptomAnalysis {
   analysisDate: string
 }
 
+// GraphQL Queries and Mutations
+const GET_AI_INSIGHTS = `
+  query GetAIInsights {
+    aiInsights {
+      id
+      type
+      title
+      description
+      severity
+      category
+      data
+      actionItems
+      memberId
+      member {
+        id
+        name
+      }
+      createdAt
+    }
+  }
+`
+
+const GENERATE_HEALTH_INSIGHTS = `
+  mutation GenerateHealthInsights($memberId: ID) {
+    generateHealthInsights(memberId: $memberId) {
+      id
+      type
+      title
+      description
+      severity
+      category
+      data
+      actionItems
+      member {
+        id
+        name
+      }
+    }
+  }
+`
+
+const DELETE_AI_INSIGHT = `
+  mutation DeleteAIInsight($id: ID!) {
+    deleteAIInsight(id: $id)
+  }
+`
+
 export default function AIInsights() {
   const searchParams = useSearchParams()
+  const { isSignedIn, user, isLoaded } = useUser()
+  const { getToken } = useAuth()
   const [insights, setInsights] = useState<HealthInsight[]>([])
   const [predictions, setPredictions] = useState<HealthPrediction[]>([])
   const [symptomAnalysis, setSymptomAnalysis] = useState<SymptomAnalysis | null>(null)
@@ -106,105 +157,113 @@ export default function AIInsights() {
   ]
 
   useEffect(() => {
-    loadAIInsights()
+    if (isLoaded && isSignedIn && user) {
+      loadAIInsights()
+    }
     
     // Check for URL parameter to set active tab
     const tabParam = searchParams.get('tab')
     if (tabParam === 'symptoms') {
       setActiveTab('symptoms')
     }
-  }, [searchParams])
+  }, [searchParams, isLoaded, isSignedIn, user])
 
   const loadAIInsights = async () => {
+    if (!user) return
+    
     try {
       setLoading(true)
       
-      // Simulate AI processing delay
-      await new Promise(resolve => setTimeout(resolve, 2000))
+      // Get Clerk token
+      const token = await getToken()
+      if (!token) {
+        throw new Error('No authentication token available')
+      }
       
-      // Mock AI insights data
-      const mockInsights: HealthInsight[] = [
-        {
-          id: '1',
-          type: 'alert',
-          title: 'Blood Pressure Trend Alert',
-          description: 'Divya\'s blood pressure readings show an upward trend over the past 2 weeks. Consider scheduling a consultation.',
-          severity: 'high',
-          category: 'health',
-          confidence: 87,
-          actionable: true,
-          timestamp: '2024-01-15T10:30:00Z'
-        },
-        {
-          id: '2',
-          type: 'recommendation',
-          title: 'Medication Optimization',
-          description: 'Based on your health patterns, consider taking your hypertension medication in the morning for better effectiveness.',
-          severity: 'medium',
-          category: 'medication',
-          confidence: 92,
-          actionable: true,
-          timestamp: '2024-01-15T09:15:00Z'
-        },
-        {
-          id: '3',
-          type: 'trend',
-          title: 'Exercise Pattern Analysis',
-          description: 'Your activity levels have decreased by 15% this week. Regular exercise can help manage hypertension.',
-          severity: 'medium',
-          category: 'lifestyle',
-          confidence: 78,
-          actionable: true,
-          timestamp: '2024-01-14T16:45:00Z'
-        },
-        {
-          id: '4',
-          type: 'prediction',
-          title: 'Health Score Projection',
-          description: 'If current trends continue, your health score may drop to 78% by next month. Focus on medication adherence.',
-          severity: 'medium',
-          category: 'health',
-          confidence: 85,
-          actionable: true,
-          timestamp: '2024-01-14T14:20:00Z'
-        }
-      ]
-
-      const mockPredictions: HealthPrediction[] = [
-        {
-          memberId: 'divya-001',
-          memberName: 'Divya',
-          prediction: 'Risk of elevated blood pressure in next 30 days',
-          riskLevel: 'medium',
-          timeframe: 'Next 30 days',
-          recommendations: [
-            'Monitor blood pressure daily',
-            'Maintain low-sodium diet',
-            'Increase physical activity',
-            'Ensure medication adherence'
-          ]
-        },
-        {
-          memberId: 'tushar-002',
-          memberName: 'Tushar',
-          prediction: 'Excellent health trajectory maintained',
-          riskLevel: 'low',
-          timeframe: 'Next 3 months',
-          recommendations: [
-            'Continue current lifestyle',
-            'Maintain regular checkups',
-            'Keep up exercise routine'
-          ]
-        }
-      ]
-
-      setInsights(mockInsights)
-      setPredictions(mockPredictions)
+      // Fetch AI insights from GraphQL API
+      const data = await graphqlRequest(GET_AI_INSIGHTS, {}, token)
+      console.log('🤖 Loaded AI insights from GraphQL:', data)
+      
+      // Convert backend data to frontend format
+      const formattedInsights: HealthInsight[] = (data.aiInsights || []).map((insight: any) => ({
+        id: insight.id,
+        type: insight.type as 'prediction' | 'recommendation' | 'alert' | 'trend',
+        title: insight.title,
+        description: insight.description,
+        severity: insight.severity as 'low' | 'medium' | 'high',
+        category: insight.category as 'health' | 'medication' | 'appointment' | 'lifestyle',
+        confidence: 85, // Can be calculated from data
+        actionable: !!insight.actionItems,
+        timestamp: insight.createdAt
+      }))
+      
+      // Extract predictions from insights
+      const formattedPredictions: HealthPrediction[] = formattedInsights
+        .filter(i => i.type === 'prediction')
+        .map(insight => ({
+          memberId: '', // Can be extracted from insight data
+          memberName: 'Self', // Can be extracted from insight data
+          prediction: insight.description,
+          riskLevel: insight.severity as 'low' | 'medium' | 'high',
+          timeframe: 'Next 30 days', // Can be extracted from insight data
+          recommendations: [] // Can be extracted from actionItems
+        }))
+      
+      setInsights(formattedInsights)
+      setPredictions(formattedPredictions)
       
     } catch (error) {
       console.error('Error loading AI insights:', error)
+      setInsights([])
+      setPredictions([])
     } finally {
       setLoading(false)
+    }
+  }
+
+  const handleGenerateInsights = async (memberId?: string) => {
+    if (!user) return
+    
+    try {
+      setLoading(true)
+      
+      const token = await getToken()
+      if (!token) {
+        throw new Error('No authentication token available')
+      }
+      
+      const data = await graphqlRequest(GENERATE_HEALTH_INSIGHTS, { memberId: memberId || null }, token)
+      console.log('✅ Generated AI insights:', data)
+      
+      // Reload insights
+      await loadAIInsights()
+      
+    } catch (error) {
+      console.error('Error generating AI insights:', error)
+      alert('Failed to generate insights. Please try again.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleDeleteInsight = async (id: string) => {
+    if (!user) return
+    
+    try {
+      const token = await getToken()
+      if (!token) {
+        throw new Error('No authentication token available')
+      }
+      
+      await graphqlRequest(DELETE_AI_INSIGHT, { id }, token)
+      
+      // Remove from local state
+      setInsights(prev => prev.filter(i => i.id !== id))
+      
+      console.log('✅ AI insight deleted:', id)
+    } catch (error) {
+      console.error('Error deleting AI insight:', error)
+      alert('Failed to delete insight. Please try again.')
     }
   }
 
@@ -259,6 +318,8 @@ export default function AIInsights() {
   }
 
   const analyzeSymptoms = async () => {
+    if (!user) return
+    
     if (selectedSymptoms.length === 0) {
       alert('Please select at least one symptom to analyze')
       return
@@ -267,34 +328,63 @@ export default function AIInsights() {
     try {
       setAnalyzingSymptoms(true)
       
-      // Simulate AI analysis delay
-      await new Promise(resolve => setTimeout(resolve, 3000))
+      const token = await getToken()
+      if (!token) {
+        throw new Error('No authentication token available')
+      }
       
-      // Mock AI analysis
-      const mockAnalysis: SymptomAnalysis = {
-        id: Date.now().toString(),
-        symptoms: selectedSymptoms,
-        possibleConditions: [
-          {
-            name: 'Common Cold',
-            probability: 85,
-            description: 'Viral upper respiratory infection',
-            urgency: 'low',
-            recommendations: ['Rest and hydration', 'Over-the-counter cold medicine', 'Warm liquids']
-          },
-          {
-            name: 'Swine Flu',
-            probability: 60,
-            description: 'Influenza A (H1N1) like illness with fever, cough, sore throat, body aches',
-            urgency: 'medium',
-            recommendations: ['Consider antivirals within 48 hours', 'Rest and fluids', 'Monitor temperature and breathing']
+      // Prepare symptoms data for GraphQL
+      const symptomsData = selectedSymptoms.map(s => ({
+        name: s.name,
+        category: s.category,
+        severity: s.severity,
+        duration: s.duration,
+        frequency: s.frequency
+      }))
+      
+      const ANALYZE_SYMPTOMS = `
+        mutation AnalyzeSymptoms($symptoms: JSON!, $memberId: ID) {
+          analyzeSymptoms(symptoms: $symptoms, memberId: $memberId) {
+            id
+            symptoms
+            analysis
+            conditions
+            urgencyLevel
+            createdAt
+            member {
+              id
+              name
+            }
           }
-        ],
-        urgencyLevel: 'medium',
-        analysisDate: new Date().toISOString()
+        }
+      `
+      
+      const data = await graphqlRequest(ANALYZE_SYMPTOMS, { 
+        symptoms: symptomsData,
+        memberId: null 
+      }, token)
+      
+      console.log('🔍 Symptom analysis result:', data)
+      
+      const result = data.analyzeSymptoms
+      const analysis = result.analysis || {}
+      const conditions = result.conditions || []
+      
+      const formattedAnalysis: SymptomAnalysis = {
+        id: result.id,
+        symptoms: selectedSymptoms,
+        possibleConditions: Array.isArray(conditions) ? conditions.map((cond: any) => ({
+          name: cond.name || 'Unknown Condition',
+          probability: cond.probability || 50,
+          description: cond.description || '',
+          urgency: cond.urgency || 'medium' as const,
+          recommendations: cond.recommendations || []
+        })) : [],
+        urgencyLevel: result.urgencyLevel || 'medium' as const,
+        analysisDate: result.createdAt
       }
 
-      setSymptomAnalysis(mockAnalysis)
+      setSymptomAnalysis(formattedAnalysis)
       
     } catch (error) {
       console.error('Error analyzing symptoms:', error)
@@ -341,12 +431,20 @@ export default function AIInsights() {
               
               <div className="mt-6 lg:mt-0 flex space-x-3">
                 <button 
-                  onClick={loadAIInsights}
+                  onClick={() => handleGenerateInsights()}
                   disabled={loading}
                   className="inline-flex items-center px-3 py-2 bg-primary-600 text-white rounded-lg font-medium hover:bg-primary-700 transition-colors shadow-md disabled:opacity-50 text-sm"
                 >
+                  <Zap className={`w-4 h-4 mr-2 ${loading ? 'animate-pulse' : ''}`} />
+                  Generate Insights
+                </button>
+                <button 
+                  onClick={loadAIInsights}
+                  disabled={loading}
+                  className="inline-flex items-center px-3 py-2 bg-gray-600 text-white rounded-lg font-medium hover:bg-gray-700 transition-colors shadow-md disabled:opacity-50 text-sm"
+                >
                   <Brain className={`w-4 h-4 mr-2 ${loading ? 'animate-pulse' : ''}`} />
-                  Refresh Insights
+                  Refresh
                 </button>
               </div>
             </div>
