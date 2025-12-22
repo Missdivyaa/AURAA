@@ -25,28 +25,43 @@ interface FamilyMember {
   status: 'excellent' | 'good' | 'fair' | 'poor'
 }
 
-interface HealthOverviewProps {
-  familyMembers: FamilyMember[]
+interface DashboardStats {
+  totalMembers: number
+  averageHealthScore: number
+  totalMedications: number
+  upcomingAppointments: number
+  healthAlerts: number
 }
 
-export default function HealthOverview({ familyMembers }: HealthOverviewProps) {
-  const totalMembers = familyMembers.length
-  const averageHealthScore = Math.round(familyMembers.reduce((sum, member) => sum + member.healthScore, 0) / totalMembers)
-  const totalMedications = familyMembers.reduce((sum, member) => sum + member.medications, 0)
-  const upcomingAppointments = familyMembers.filter(member => {
-    if (!member.nextAppointment || member.nextAppointment.trim() === '') return false
-    try {
-      const nextAppointment = new Date(member.nextAppointment)
-      const today = new Date()
-      const diffTime = nextAppointment.getTime() - today.getTime()
-      const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24))
-      return diffDays <= 30 && diffDays >= 0
-    } catch {
-      return false
-    }
-  }).length
+interface HealthOverviewProps {
+  familyMembers: FamilyMember[]
+  dashboardStats?: DashboardStats | null
+}
 
-  // Calculate alerts using the same logic as RecentActivity
+export default function HealthOverview({ familyMembers, dashboardStats }: HealthOverviewProps) {
+  // Use backend stats if available, otherwise calculate from family members
+  const totalMembers = dashboardStats?.totalMembers ?? familyMembers.length
+  const averageHealthScore = dashboardStats?.averageHealthScore ?? 
+    (familyMembers.length > 0 
+      ? Math.round(familyMembers.reduce((sum, member) => sum + member.healthScore, 0) / familyMembers.length)
+      : 0)
+  const totalMedications = dashboardStats?.totalMedications ?? 
+    familyMembers.reduce((sum, member) => sum + member.medications, 0)
+  const upcomingAppointments = dashboardStats?.upcomingAppointments ?? 
+    familyMembers.filter(member => {
+      if (!member.nextAppointment || member.nextAppointment.trim() === '') return false
+      try {
+        const nextAppointment = new Date(member.nextAppointment)
+        const today = new Date()
+        const diffTime = nextAppointment.getTime() - today.getTime()
+        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24))
+        return diffDays <= 30 && diffDays >= 0
+      } catch {
+        return false
+      }
+    }).length
+
+  // Calculate alerts using the same logic as RecentActivity (fallback if no backend stats)
   const calculateHealthAlerts = () => {
     let alertCount = 0
     
@@ -90,7 +105,7 @@ export default function HealthOverview({ familyMembers }: HealthOverviewProps) {
     return alertCount
   }
 
-  const healthAlerts = calculateHealthAlerts()
+  const healthAlerts = dashboardStats?.healthAlerts ?? calculateHealthAlerts()
 
   const overviewCards = [
     {

@@ -114,6 +114,24 @@ const GET_APPOINTMENTS = `
   }
 `
 
+<<<<<<< HEAD
+=======
+const GET_DASHBOARD_STATS = `
+  query GetDashboardStats {
+    dashboardStats {
+      totalMembers
+      averageHealthScore
+      totalMedications
+      upcomingAppointments
+      healthAlerts
+      totalAppointments
+      totalReminders
+      totalHealthReports
+    }
+  }
+`
+
+>>>>>>> f777a20 (Connect dashboard stats to backend - Add GraphQL dashboardStats query and resolver, update dashboard to fetch stats from backend API)
 export default function UserDashboard() {
   const { isSignedIn, user, isLoaded } = useUser()
   const { getToken } = useAuth()
@@ -124,6 +142,16 @@ export default function UserDashboard() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [editingMember, setEditingMember] = useState<FamilyMember | null>(null)
+  const [dashboardStats, setDashboardStats] = useState<{
+    totalMembers: number
+    averageHealthScore: number
+    totalMedications: number
+    upcomingAppointments: number
+    healthAlerts: number
+    totalAppointments: number
+    totalReminders: number
+    totalHealthReports: number
+  } | null>(null)
   const loadingRef = useRef(false)
   useEffect(() => { loadingRef.current = loading }, [loading])
 
@@ -164,12 +192,28 @@ export default function UserDashboard() {
       
       console.log('✅ Got authentication token')
       
+<<<<<<< HEAD
       // Fetch family members and related data from GraphQL API
       const data = await graphqlRequest(GET_FAMILY_MEMBERS, {}, token)
       const appointmentsData = await graphqlRequest(GET_APPOINTMENTS, {}, token)
       
       console.log('🔍 Dashboard: Raw family members response:', data)
       console.log('🔍 Dashboard: Raw appointments response:', appointmentsData)
+=======
+      // Fetch family members, appointments, and dashboard stats from GraphQL API
+      const data = await graphqlRequest(GET_FAMILY_MEMBERS, {}, token)
+      const appointmentsData = await graphqlRequest(GET_APPOINTMENTS, {}, token)
+      const statsData = await graphqlRequest(GET_DASHBOARD_STATS, {}, token)
+      
+      console.log('🔍 Dashboard: Raw family members response:', data)
+      console.log('🔍 Dashboard: Raw appointments response:', appointmentsData)
+      console.log('🔍 Dashboard: Raw stats response:', statsData)
+      
+      // Set dashboard stats
+      if (statsData && statsData.dashboardStats) {
+        setDashboardStats(statsData.dashboardStats)
+      }
+>>>>>>> f777a20 (Connect dashboard stats to backend - Add GraphQL dashboardStats query and resolver, update dashboard to fetch stats from backend API)
       
       if (!data || !data.familyMembers) {
         throw new Error('Invalid response from backend')
@@ -481,7 +525,7 @@ export default function UserDashboard() {
               className="space-y-8"
             >
               {/* Health Overview */}
-              <HealthOverview familyMembers={familyMembers} />
+              <HealthOverview familyMembers={familyMembers} dashboardStats={dashboardStats} />
               
               {/* Quick Actions */}
               <QuickActions />

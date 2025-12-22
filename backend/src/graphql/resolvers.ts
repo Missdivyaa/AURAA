@@ -313,6 +313,145 @@ export const resolvers = {
         language: 'en'
       };
     },
+
+    dashboardStats: async (_: any, __: any, { userContext }: { userContext: UserContext }) => {
+      if (!userContext) throw new Error('Authentication required');
+      
+      const userId = userContext.userId;
+      const now = new Date();
+      const thirtyDaysFromNow = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+      const oneYearAgo = new Date(now.getTime() - 365 * 24 * 60 * 60 * 1000);
+      const sevenDaysFromNow = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+
+      // Get all family members with their related data
+      const familyMembers = await prisma.familyMember.findMany({
+        where: { userId },
+        include: {
+          medications: true,
+          appointments: true,
+          reminders: true,
+        }
+      });
+
+      // Get all medications (active ones)
+      const allMedications = await prisma.medication.findMany({
+        where: { 
+          userId,
+          status: 'active'
+        }
+      });
+
+      // Get upcoming appointments (next 30 days, not cancelled)
+      const upcomingAppointments = await prisma.appointment.findMany({
+        where: {
+          userId,
+          date: {
+            gte: now,
+            lte: thirtyDaysFromNow
+          },
+          status: {
+            not: 'cancelled'
+          }
+        }
+      });
+
+      // Get all appointments
+      const allAppointments = await prisma.appointment.findMany({
+        where: { userId }
+      });
+
+      // Get all reminders
+      const allReminders = await prisma.reminder.findMany({
+        where: { userId }
+      });
+
+      // Get all health reports
+      const allHealthReports = await prisma.healthReport.findMany({
+        where: { userId }
+      });
+
+      // Calculate average health score
+      const calculateHealthScore = (member: any): number => {
+        const dob = member.dob ? new Date(member.dob) : null;
+        if (!dob || isNaN(dob.getTime())) return 75; // Default score
+        
+        const age = Math.floor((now.getTime() - dob.getTime()) / (1000 * 60 * 60 * 24 * 365.25));
+        const conditionsCount = Array.isArray(member.conditions) ? member.conditions.length : 0;
+        
+        let score = 100;
+        if (age >= 65) score -= 20;
+        else if (age >= 50) score -= 15;
+        else if (age >= 35) score -= 10;
+        else if (age >= 18) score -= 5;
+        score -= conditionsCount * 8;
+        return Math.max(0, Math.min(100, score));
+      };
+
+      const healthScores = familyMembers.map(calculateHealthScore);
+      const averageHealthScore = healthScores.length > 0
+        ? healthScores.reduce((sum, score) => sum + score, 0) / healthScores.length
+        : 0;
+
+      // Calculate health alerts
+      let healthAlerts = 0;
+      
+      for (const member of familyMembers) {
+        const healthScore = calculateHealthScore(member);
+        
+        // Count members with poor or fair health status
+        if (healthScore < 60) {
+          healthAlerts++;
+        }
+        
+        // Check for overdue checkups (more than 1 year)
+        const memberAppointments = allAppointments.filter(appt => appt.memberId === member.id);
+        const pastAppointments = memberAppointments.filter(appt => {
+          const apptDate = new Date(appt.date);
+          return apptDate.getTime() <= now.getTime() && appt.status === 'completed';
+        });
+        
+        if (pastAppointments.length > 0) {
+          const latestCheckup = pastAppointments.reduce((latest, appt) => {
+            const apptDate = new Date(appt.date);
+            return !latest || apptDate.getTime() > new Date(latest.date).getTime() ? appt : latest;
+          }, null as any);
+          
+          if (latestCheckup) {
+            const checkupDate = new Date(latestCheckup.date);
+            const daysSince = Math.floor((now.getTime() - checkupDate.getTime()) / (1000 * 60 * 60 * 24));
+            if (daysSince > 365) {
+              healthAlerts++;
+            }
+          }
+        } else {
+          // No checkup date counts as alert
+          healthAlerts++;
+        }
+        
+        // Count urgent upcoming appointments (within 7 days)
+        const urgentAppointments = memberAppointments.filter(appt => {
+          const apptDate = new Date(appt.date);
+          return apptDate.getTime() > now.getTime() && 
+                 apptDate.getTime() <= sevenDaysFromNow.getTime() &&
+                 appt.status !== 'cancelled';
+        });
+        
+        if (urgentAppointments.length > 0) {
+          healthAlerts++;
+        }
+      }
+
+      return {
+        totalMembers: familyMembers.length,
+        averageHealthScore: Math.round(averageHealthScore * 10) / 10, // Round to 1 decimal
+        totalMedications: allMedications.length,
+        upcomingAppointments: upcomingAppointments.length,
+        healthAlerts,
+        totalAppointments: allAppointments.length,
+        totalReminders: allReminders.length,
+        totalHealthReports: allHealthReports.length,
+      };
+    },
   },
 
   Mutation: {

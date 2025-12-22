@@ -385,6 +385,17 @@ export const typeDefs = gql`
     extracted: ExtractedReportData!
   }
 
+  type DashboardStats {
+    totalMembers: Int!
+    averageHealthScore: Float!
+    totalMedications: Int!
+    upcomingAppointments: Int!
+    healthAlerts: Int!
+    totalAppointments: Int!
+    totalReminders: Int!
+    totalHealthReports: Int!
+  }
+
   # Queries
   type Query {
     me: User
@@ -408,6 +419,7 @@ export const typeDefs = gql`
     wearableDataById(id: ID!): WearableData
     emergencyQR: String
     userPreferences: JSON
+    dashboardStats: DashboardStats!
   }
 
   # Mutations
