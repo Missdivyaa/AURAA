@@ -680,52 +680,40 @@ export const resolvers = {
       
       const { autoExtract, extractedText, fileName, ...reportData } = input;
       
-      // Validate the report if extracted text is available
-      let validationStatus = 'pending';
-      let accuracyScore: number | null = null;
-      let matchedTerms: string[] = [];
-      let rejectionReason: string | null = null;
-      let status = 'uploaded';
-      
-      if (extractedText) {
-        const validation = validateMedicalReport(extractedText, fileName);
-        validationStatus = validation.isValid ? 'valid' : 'invalid';
-        accuracyScore = validation.accuracyScore;
-        matchedTerms = validation.matchedTerms;
-        rejectionReason = validation.rejectionReason || null;
-        status = validation.isValid ? 'validated' : 'rejected';
-        
-        // If validation fails, return early with rejection
-        if (!validation.isValid) {
-          return await prisma.healthReport.create({
-            data: {
-              ...reportData,
-              fileName,
-              extractedText,
-              userId: userContext.userId,
-              status: 'rejected',
-              validationStatus: 'invalid',
-              accuracyScore,
-              matchedTerms,
-              rejectionReason,
-            },
-            include: { member: true }
-          });
-        }
+      // Validate the report - REQUIRED for upload
+      if (!extractedText || extractedText.trim() === '') {
+        throw new Error('Report validation failed: No text content found in the document. Please upload a readable medical report.');
       }
       
-      // Create the report
+      const validation = validateMedicalReport(extractedText, fileName);
+      
+      // REJECT invalid reports - do not save to database
+      if (!validation.isValid) {
+        throw new Error(
+          `Report validation failed: ${validation.rejectionReason || 'Document does not appear to be a valid medical report.'} ` +
+          `Accuracy: ${Math.round(validation.accuracyScore * 100)}% (minimum 60% required). ` +
+          `Please upload a valid medical report only.`
+        );
+      }
+      
+      // Only proceed if validation passes
+      const validationStatus = 'valid';
+      const accuracyScore = validation.accuracyScore;
+      const matchedTerms = validation.matchedTerms;
+      const status = 'validated';
+      
+      // Create the report (only valid reports reach here)
       const report = await prisma.healthReport.create({
         data: {
           ...reportData,
           fileName,
           extractedText,
           userId: userContext.userId,
-          status: validationStatus === 'valid' ? 'validated' : 'uploaded',
-          validationStatus: validationStatus === 'pending' ? null : validationStatus,
+          status: 'validated',
+          validationStatus: 'valid',
           accuracyScore,
           matchedTerms,
-          rejectionReason,
+          rejectionReason: null, // No rejection reason for valid reports
         },
         include: { member: true }
       });

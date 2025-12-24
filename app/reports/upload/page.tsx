@@ -167,66 +167,8 @@ export default function UploadReports() {
           const fileInfo = uploadData.file
           const validation = uploadData.validation
 
-          // Step 2: Create health report in database via GraphQL
-          if (validation.isValid) {
-            setIsAnalyzing(true)
-            
-            try {
-              const reportData = await graphqlRequest(CREATE_HEALTH_REPORT, {
-                input: {
-                  memberId: selectedMember,
-                  fileName: fileInfo.fileName,
-                  fileType: fileInfo.fileType,
-                  fileUrl: fileInfo.fileUrl,
-                  fileSize: fileInfo.fileSize,
-                  extractedText: fileInfo.extractedText,
-                  autoExtract: true // Automatically extract medications/appointments/reminders
-                }
-              }, token)
-
-              const report = reportData.createHealthReport
-
-              accepted.push({
-                id: report.id,
-                name: file.name,
-                size: formatFileSize(file.size),
-                type: file.type,
-                category: 'medical',
-                uploadDate: new Date().toISOString().split('T')[0],
-                familyMemberId: selectedMember,
-                familyMemberName: familyMembers.find(m => m.id === selectedMember)?.name || '',
-                description: '',
-                tags: [],
-                medicalScore: report.accuracyScore || validation.accuracyScore,
-                matchedTerms: report.matchedTerms || validation.matchedTerms || [],
-                uploaded: true,
-                url: fileInfo.fileUrl
-              })
-
-              console.log('✅ Report uploaded and processed:', report.id)
-              console.log('📊 Auto-extracted data:', report.analysis)
-            } catch (graphqlError: any) {
-              console.error('Error creating health report:', graphqlError)
-              rejected.push({
-                id: `file-${Date.now()}-${index}`,
-                name: file.name,
-                size: formatFileSize(file.size),
-                type: file.type,
-                category: 'general',
-                uploadDate: new Date().toISOString().split('T')[0],
-                familyMemberId: selectedMember,
-                familyMemberName: familyMembers.find(m => m.id === selectedMember)?.name || '',
-                description: '',
-                tags: [],
-                medicalScore: validation.accuracyScore,
-                matchedTerms: validation.matchedTerms || [],
-                uploaded: false,
-                rejectionReason: `Failed to save report: ${graphqlError.message || 'Unknown error'}`,
-                url: ''
-              })
-            }
-          } else {
-            // Report validation failed
+          // CRITICAL: Only proceed if validation passes - reject invalid reports immediately
+          if (!validation.isValid) {
             rejected.push({
               id: `file-${Date.now()}-${index}`,
               name: file.name,
@@ -241,7 +183,67 @@ export default function UploadReports() {
               medicalScore: validation.accuracyScore,
               matchedTerms: validation.matchedTerms || [],
               uploaded: false,
-              rejectionReason: validation.rejectionReason || 'Report validation failed',
+              rejectionReason: validation.rejectionReason || `Invalid medical report. Accuracy: ${Math.round(validation.accuracyScore * 100)}% (minimum 60% required). Please upload a valid medical report only.`,
+              url: ''
+            })
+            continue // Skip to next file - do NOT save invalid reports
+          }
+
+          // Step 2: Only create health report if validation passed
+          setIsAnalyzing(true)
+          
+          try {
+            const reportData = await graphqlRequest(CREATE_HEALTH_REPORT, {
+              input: {
+                memberId: selectedMember,
+                fileName: fileInfo.fileName,
+                fileType: fileInfo.fileType,
+                fileUrl: fileInfo.fileUrl,
+                fileSize: fileInfo.fileSize,
+                extractedText: fileInfo.extractedText,
+                autoExtract: true // Automatically extract medications/appointments/reminders
+              }
+            }, token)
+
+            const report = reportData.createHealthReport
+
+            accepted.push({
+              id: report.id,
+              name: file.name,
+              size: formatFileSize(file.size),
+              type: file.type,
+              category: 'medical',
+              uploadDate: new Date().toISOString().split('T')[0],
+              familyMemberId: selectedMember,
+              familyMemberName: familyMembers.find(m => m.id === selectedMember)?.name || '',
+              description: '',
+              tags: [],
+              medicalScore: report.accuracyScore || validation.accuracyScore,
+              matchedTerms: report.matchedTerms || validation.matchedTerms || [],
+              uploaded: true,
+              url: fileInfo.fileUrl
+            })
+
+            console.log('✅ Valid medical report uploaded and processed:', report.id)
+            console.log('📊 Auto-extracted data:', report.analysis)
+          } catch (graphqlError: any) {
+            console.error('Error creating health report:', graphqlError)
+            // If GraphQL fails, the report was already validated but couldn't be saved
+            rejected.push({
+              id: `file-${Date.now()}-${index}`,
+              name: file.name,
+              size: formatFileSize(file.size),
+              type: file.type,
+              category: 'general',
+              uploadDate: new Date().toISOString().split('T')[0],
+              familyMemberId: selectedMember,
+              familyMemberName: familyMembers.find(m => m.id === selectedMember)?.name || '',
+              description: '',
+              tags: [],
+              medicalScore: validation.accuracyScore,
+              matchedTerms: validation.matchedTerms || [],
+              uploaded: false,
+              rejectionReason: `Failed to save report: ${graphqlError.message || 'Unknown error'}`,
               url: ''
             })
           }
@@ -373,7 +375,8 @@ export default function UploadReports() {
                 </div>
                 <div>
                   <h4 className="text-lg font-semibold text-gray-900 mb-2">Drop files here or click to upload</h4>
-                  <p className="text-sm text-gray-600 mb-4">Supports PDF, images, and text files up to 10MB each</p>
+                  <p className="text-sm text-gray-600 mb-2">Supports PDF, images, and text files up to 10MB each</p>
+                  <p className="text-xs text-orange-600 font-semibold">⚠️ Only valid medical reports will be uploaded. Invalid documents will be rejected.</p>
                 </div>
                 <button
                   type="button"
@@ -442,12 +445,12 @@ export default function UploadReports() {
                           {file.uploaded && (file.medicalScore || 0) >= 0.6 ? (
                             <div className="inline-flex items-center mt-1 text-xs font-semibold text-green-700 bg-green-50 border border-green-200 rounded px-2 py-0.5">
                               <CheckCircle className="w-3 h-3 mr-1" /> 
-                              Validated & Saved • Medications, appointments, and reminders extracted automatically
+                              Valid Medical Report • Uploaded & Saved • Medications, appointments, and reminders extracted automatically
                             </div>
                           ) : (
                             <div className="inline-flex items-center mt-1 text-xs font-semibold text-red-700 bg-red-50 border border-red-200 rounded px-2 py-0.5">
                               <AlertCircle className="w-3 h-3 mr-1" />
-                              <span>Rejected{file.rejectionReason ? ` — ${file.rejectionReason}` : ''}</span>
+                              <span>Rejected - Not a Valid Medical Report{file.rejectionReason ? ` — ${file.rejectionReason}` : ''}</span>
                             </div>
                           )}
                         </div>
