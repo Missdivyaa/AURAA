@@ -724,8 +724,41 @@ export const resolvers = {
           const extracted = await extractDataFromReport(report.fileUrl || undefined, extractedText);
           const targetMemberId = report.memberId || null;
           
+          // Update family member with conditions and patient info if memberId exists
+          if (targetMemberId && (extracted.conditions?.length > 0 || extracted.patientInfo)) {
+            const member = await prisma.familyMember.findFirst({
+              where: { id: targetMemberId, userId: userContext.userId }
+            });
+            
+            if (member) {
+              const existingConditions = Array.isArray(member.conditions) ? member.conditions : [];
+              const newConditions = extracted.conditions || [];
+              // Merge conditions, removing duplicates
+              const updatedConditions = [...new Set([...existingConditions, ...newConditions])];
+              
+              const updateData: any = {
+                conditions: updatedConditions,
+              };
+              
+              // Update patient info if available
+              if (extracted.patientInfo) {
+                if (extracted.patientInfo.bloodType && !member.bloodType) {
+                  updateData.bloodType = extracted.patientInfo.bloodType;
+                }
+                // Note: age and gender are typically set during member creation, but we can update if needed
+              }
+              
+              await prisma.familyMember.update({
+                where: { id: targetMemberId },
+                data: updateData,
+              });
+              
+              console.log(`✅ Updated family member ${targetMemberId} with ${updatedConditions.length} conditions`);
+            }
+          }
+          
           // Create medications
-          await Promise.all(
+          const createdMedications = await Promise.all(
             (extracted.medications || []).map(async (med: any) => {
               const startDate = med.startDate ? new Date(med.startDate) : new Date();
               const endDate = med.endDate ? new Date(med.endDate) : null;
@@ -746,10 +779,20 @@ export const resolvers = {
             })
           );
           
+          console.log(`✅ Created ${createdMedications.length} medications`);
+          
           // Create appointments
-          await Promise.all(
+          const createdAppointments = await Promise.all(
             (extracted.appointments || []).map(async (appt: any) => {
-              const date = appt.date ? new Date(appt.date) : new Date();
+              // Parse date string (handle formats like "20 January 2026")
+              let date = new Date();
+              if (appt.date) {
+                const parsedDate = new Date(appt.date);
+                if (!isNaN(parsedDate.getTime())) {
+                  date = parsedDate;
+                }
+              }
+              
               return prisma.appointment.create({
                 data: {
                   userId: userContext.userId,
@@ -766,10 +809,19 @@ export const resolvers = {
             })
           );
           
+          console.log(`✅ Created ${createdAppointments.length} appointments`);
+          
           // Create reminders
-          await Promise.all(
+          const createdReminders = await Promise.all(
             (extracted.reminders || []).map(async (rem: any) => {
-              const date = rem.date ? new Date(rem.date) : new Date();
+              let date = new Date();
+              if (rem.date) {
+                const parsedDate = new Date(rem.date);
+                if (!isNaN(parsedDate.getTime())) {
+                  date = parsedDate;
+                }
+              }
+              
               return prisma.reminder.create({
                 data: {
                   userId: userContext.userId,
@@ -787,6 +839,8 @@ export const resolvers = {
             })
           );
           
+          console.log(`✅ Created ${createdReminders.length} reminders`);
+          
           // Update report status to analyzed
           await prisma.healthReport.update({
             where: { id: report.id },
@@ -796,12 +850,28 @@ export const resolvers = {
                 extracted,
                 autoExtracted: true,
                 extractedAt: new Date().toISOString(),
+                medicationsCreated: createdMedications.length,
+                appointmentsCreated: createdAppointments.length,
+                remindersCreated: createdReminders.length,
+                conditionsExtracted: extracted.conditions?.length || 0,
               }
             }
           });
+          
+          console.log(`✅ Report ${report.id} fully analyzed and data extracted`);
         } catch (error) {
-          console.error('Error during auto-extraction:', error);
-          // Don't fail the report creation if extraction fails
+          console.error('❌ Error during auto-extraction:', error);
+          // Update report status to error but don't fail the report creation
+          await prisma.healthReport.update({
+            where: { id: report.id },
+            data: {
+              status: 'error',
+              analysis: {
+                error: error instanceof Error ? error.message : 'Unknown extraction error',
+                extractedAt: new Date().toISOString(),
+              }
+            }
+          });
         }
       }
       
