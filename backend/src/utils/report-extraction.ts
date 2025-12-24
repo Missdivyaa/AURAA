@@ -51,6 +51,13 @@ export async function extractDataFromReport(
   const ocrApiKey = process.env.OCRSPACE_API_KEY;
   const openAiKey = process.env.OPENAI_API_KEY;
   const openAiModel = process.env.OPENAI_MODEL || 'gpt-4o-mini';
+  
+  // Debug logging
+  console.log('🔍 Environment check:');
+  console.log('  - OPENAI_API_KEY exists:', !!openAiKey);
+  console.log('  - OPENAI_API_KEY length:', openAiKey ? openAiKey.length : 0);
+  console.log('  - OPENAI_MODEL:', openAiModel);
+  console.log('  - OCRSPACE_API_KEY exists:', !!ocrApiKey);
 
   // 1) Get raw text (OCR or existing)
   let rawText = existingText || '';

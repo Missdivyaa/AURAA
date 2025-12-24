@@ -16,7 +16,29 @@ import { upload } from './middleware/file-upload';
 import { validateMedicalReport } from './utils/report-validation';
 
 // Load environment variables
-dotenv.config();
+// Try loading from backend directory first, then fallback to root
+const backendEnvPath = path.join(__dirname, '../.env');
+const rootEnvPath = path.join(__dirname, '../../.env');
+
+if (fs.existsSync(backendEnvPath)) {
+  dotenv.config({ path: backendEnvPath });
+  console.log('✅ Loaded .env from backend directory');
+} else if (fs.existsSync(rootEnvPath)) {
+  dotenv.config({ path: rootEnvPath });
+  console.log('✅ Loaded .env from root directory');
+} else {
+  dotenv.config(); // Try default location
+  console.log('⚠️ Using default .env location');
+}
+
+// Debug: Log environment variables (without exposing secrets)
+console.log('\n🔍 Environment Variables Check:');
+console.log('  - OPENAI_API_KEY:', process.env.OPENAI_API_KEY ? `✅ Set (${process.env.OPENAI_API_KEY.length} chars, starts with: ${process.env.OPENAI_API_KEY.substring(0, 7)}...)` : '❌ NOT SET');
+console.log('  - OCRSPACE_API_KEY:', process.env.OCRSPACE_API_KEY ? `✅ Set (${process.env.OCRSPACE_API_KEY.length} chars)` : '⚠️ NOT SET (optional)');
+console.log('  - DATABASE_URL:', process.env.DATABASE_URL ? '✅ Set' : '❌ NOT SET');
+console.log('  - CLERK_SECRET_KEY:', process.env.CLERK_SECRET_KEY ? '✅ Set' : '❌ NOT SET');
+console.log('  - OPENAI_MODEL:', process.env.OPENAI_MODEL || 'gpt-4o-mini (default)');
+console.log('');
 
 const app = express();
 const PORT = process.env.PORT || 4000;
