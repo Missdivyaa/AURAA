@@ -38,16 +38,24 @@ export const resolvers = {
     familyMembers: async (_: any, __: any, { userContext }: { userContext: UserContext }) => {
       if (!userContext) throw new Error('Authentication required');
       
-      return await prisma.familyMember.findMany({
-        where: { userId: userContext.userId },
-        include: {
-          healthReports: true,
-          appointments: true,
-          medications: true,
-          reminders: true,
-          aiInsights: true,
+      try {
+        return await prisma.familyMember.findMany({
+          where: { userId: userContext.userId },
+          include: {
+            healthReports: true,
+            appointments: true,
+            medications: true,
+            reminders: true,
+            aiInsights: true,
+          }
+        });
+      } catch (error: any) {
+        console.error('Error fetching family members:', error);
+        if (error.message?.includes('Can\'t reach database server')) {
+          throw new Error('Database connection failed. Please check your DATABASE_URL and ensure the database server is running.');
         }
-      });
+        throw error;
+      }
     },
 
     familyMember: async (_: any, { id }: { id: string }, { userContext }: { userContext: UserContext }) => {
@@ -74,11 +82,19 @@ export const resolvers = {
     appointments: async (_: any, __: any, { userContext }: { userContext: UserContext }) => {
       if (!userContext) throw new Error('Authentication required');
       
-      return await prisma.appointment.findMany({
-        where: { userId: userContext.userId },
-        include: { member: true },
-        orderBy: { date: 'asc' }
-      });
+      try {
+        return await prisma.appointment.findMany({
+          where: { userId: userContext.userId },
+          include: { member: true },
+          orderBy: { date: 'asc' }
+        });
+      } catch (error: any) {
+        console.error('Error fetching appointments:', error);
+        if (error.message?.includes('Can\'t reach database server')) {
+          throw new Error('Database connection failed. Please check your DATABASE_URL and ensure the database server is running.');
+        }
+        throw error;
+      }
     },
 
     appointment: async (_: any, { id }: { id: string }, { userContext }: { userContext: UserContext }) => {

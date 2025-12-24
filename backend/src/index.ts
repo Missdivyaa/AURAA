@@ -35,7 +35,17 @@ if (fs.existsSync(backendEnvPath)) {
 console.log('\n🔍 Environment Variables Check:');
 console.log('  - OPENAI_API_KEY:', process.env.OPENAI_API_KEY ? `✅ Set (${process.env.OPENAI_API_KEY.length} chars, starts with: ${process.env.OPENAI_API_KEY.substring(0, 7)}...)` : '❌ NOT SET');
 console.log('  - OCRSPACE_API_KEY:', process.env.OCRSPACE_API_KEY ? `✅ Set (${process.env.OCRSPACE_API_KEY.length} chars)` : '⚠️ NOT SET (optional)');
-console.log('  - DATABASE_URL:', process.env.DATABASE_URL ? '✅ Set' : '❌ NOT SET');
+console.log('  - DATABASE_URL:', process.env.DATABASE_URL ? `✅ Set (${process.env.DATABASE_URL.includes('@') ? 'Contains credentials' : 'Missing credentials'})` : '❌ NOT SET');
+if (process.env.DATABASE_URL) {
+  try {
+    const dbUrl = new URL(process.env.DATABASE_URL);
+    console.log('    Host:', dbUrl.hostname);
+    console.log('    Port:', dbUrl.port || '5432 (default)');
+    console.log('    Database:', dbUrl.pathname.substring(1));
+  } catch (e) {
+    console.log('    ⚠️ Invalid DATABASE_URL format');
+  }
+}
 console.log('  - CLERK_SECRET_KEY:', process.env.CLERK_SECRET_KEY ? '✅ Set' : '❌ NOT SET');
 console.log('  - OPENAI_MODEL:', process.env.OPENAI_MODEL || 'gpt-4o-mini (default)');
 console.log('');
