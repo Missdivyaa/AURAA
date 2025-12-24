@@ -4,12 +4,16 @@ import helmet from 'helmet';
 import { ApolloServer } from 'apollo-server-express';
 import { makeExecutableSchema } from 'graphql-tools';
 import dotenv from 'dotenv';
+import path from 'path';
+import fs from 'fs';
+import fetch from 'node-fetch';
 import { typeDefs } from './graphql/schema';
 import { resolvers } from './graphql/resolvers';
 import { requireAuth, optionalAuth } from './auth/clerk';
 import { userContextMiddleware } from './auth/user-context';
 import { handleClerkWebhook } from './middleware/clerk-webhook';
 import { upload } from './middleware/file-upload';
+import { validateMedicalReport } from './utils/report-validation';
 
 // Load environment variables
 dotenv.config();
@@ -53,18 +57,62 @@ app.get('/health', (req, res) => {
 // Clerk webhook endpoint
 app.post('/webhooks/clerk', handleClerkWebhook);
 
-// File upload endpoint for health reports
+// File upload endpoint for health reports with validation
 app.post('/api/upload/health-report', upload.single('file'), async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ error: 'No file uploaded' });
     }
 
-    // In a real implementation, you would:
-    // 1. Validate the file
-    // 2. Process the file (extract text, analyze content)
-    // 3. Store file information in database
-    // 4. Return file metadata
+    // Extract text from the uploaded file
+    let extractedText = '';
+    try {
+      const fileUrl = `/uploads/${req.file.filename}`;
+      const fullPath = path.join(process.cwd(), 'uploads', req.file.filename);
+      
+      // Try OCR extraction if available
+      const ocrApiKey = process.env.OCRSPACE_API_KEY;
+      if (ocrApiKey && (req.file.mimetype.startsWith('image/') || req.file.mimetype === 'application/pdf')) {
+        try {
+          // For OCR.space, we need to send the file as base64 or use file upload endpoint
+          const fileBuffer = fs.readFileSync(fullPath);
+          const base64File = fileBuffer.toString('base64');
+          
+          const formData = new URLSearchParams();
+          formData.append('base64Image', `data:${req.file.mimetype};base64,${base64File}`);
+          formData.append('language', 'eng');
+          formData.append('isOverlayRequired', 'false');
+          
+          const ocrResp = await fetch('https://api.ocr.space/parse/image', {
+            method: 'POST',
+            headers: {
+              apikey: ocrApiKey,
+              'Content-Type': 'application/x-www-form-urlencoded',
+            },
+            body: formData.toString(),
+          });
+          
+          if (ocrResp.ok) {
+            const ocrJson = await ocrResp.json();
+            extractedText = ocrJson?.ParsedResults?.[0]?.ParsedText || '';
+          }
+        } catch (ocrError) {
+          console.error('OCR extraction failed, continuing without text:', ocrError);
+        }
+      }
+      
+      // For text files, read directly
+      if (req.file.mimetype === 'text/plain' && !extractedText) {
+        extractedText = fs.readFileSync(fullPath, 'utf-8');
+      }
+    } catch (extractError) {
+      console.error('Text extraction error:', extractError);
+    }
+
+    // Validate the report
+    const validation = extractedText 
+      ? validateMedicalReport(extractedText, req.file.originalname)
+      : { isValid: false, accuracyScore: 0, matchedTerms: [], rejectionReason: 'No text extracted from document', confidence: 'low' as const };
 
     const fileInfo = {
       id: `file_${Date.now()}`,
@@ -72,16 +120,22 @@ app.post('/api/upload/health-report', upload.single('file'), async (req, res) =>
       fileType: req.file.mimetype,
       fileSize: req.file.size,
       fileUrl: `/uploads/${req.file.filename}`,
+      extractedText,
+      validationStatus: validation.isValid ? 'valid' : 'invalid',
+      accuracyScore: validation.accuracyScore,
+      matchedTerms: validation.matchedTerms,
+      rejectionReason: validation.rejectionReason,
       uploadedAt: new Date().toISOString()
     };
 
     res.json({
-      success: true,
-      file: fileInfo
+      success: validation.isValid,
+      file: fileInfo,
+      validation
     });
   } catch (error) {
     console.error('File upload error:', error);
-    res.status(500).json({ error: 'File upload failed' });
+    res.status(500).json({ error: 'File upload failed', details: error instanceof Error ? error.message : 'Unknown error' });
   }
 });
 

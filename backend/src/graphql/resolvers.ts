@@ -1,5 +1,6 @@
 import { PrismaClient } from '@prisma/client';
 import { extractDataFromReport } from '../utils/report-extraction';
+import { validateMedicalReport } from '../utils/report-validation';
 import { UserContext } from '../auth/user-context';
 
 const prisma = new PrismaClient();
@@ -677,11 +678,148 @@ export const resolvers = {
     createHealthReport: async (_: any, { input }: { input: any }, { userContext }: { userContext: UserContext }) => {
       if (!userContext) throw new Error('Authentication required');
       
-      return await prisma.healthReport.create({
+      const { autoExtract, extractedText, fileName, ...reportData } = input;
+      
+      // Validate the report if extracted text is available
+      let validationStatus = 'pending';
+      let accuracyScore: number | null = null;
+      let matchedTerms: string[] = [];
+      let rejectionReason: string | null = null;
+      let status = 'uploaded';
+      
+      if (extractedText) {
+        const validation = validateMedicalReport(extractedText, fileName);
+        validationStatus = validation.isValid ? 'valid' : 'invalid';
+        accuracyScore = validation.accuracyScore;
+        matchedTerms = validation.matchedTerms;
+        rejectionReason = validation.rejectionReason || null;
+        status = validation.isValid ? 'validated' : 'rejected';
+        
+        // If validation fails, return early with rejection
+        if (!validation.isValid) {
+          return await prisma.healthReport.create({
+            data: {
+              ...reportData,
+              fileName,
+              extractedText,
+              userId: userContext.userId,
+              status: 'rejected',
+              validationStatus: 'invalid',
+              accuracyScore,
+              matchedTerms,
+              rejectionReason,
+            },
+            include: { member: true }
+          });
+        }
+      }
+      
+      // Create the report
+      const report = await prisma.healthReport.create({
         data: {
-          ...input,
+          ...reportData,
+          fileName,
+          extractedText,
           userId: userContext.userId,
+          status: validationStatus === 'valid' ? 'validated' : 'uploaded',
+          validationStatus: validationStatus === 'pending' ? null : validationStatus,
+          accuracyScore,
+          matchedTerms,
+          rejectionReason,
         },
+        include: { member: true }
+      });
+      
+      // If autoExtract is enabled and report is valid, automatically extract and create entities
+      if (autoExtract && validationStatus === 'valid' && extractedText) {
+        try {
+          const extracted = await extractDataFromReport(report.fileUrl || undefined, extractedText);
+          const targetMemberId = report.memberId || null;
+          
+          // Create medications
+          await Promise.all(
+            (extracted.medications || []).map(async (med: any) => {
+              const startDate = med.startDate ? new Date(med.startDate) : new Date();
+              const endDate = med.endDate ? new Date(med.endDate) : null;
+              
+              return prisma.medication.create({
+                data: {
+                  userId: userContext.userId,
+                  memberId: targetMemberId,
+                  name: med.name || 'Medication',
+                  dosage: med.dosage || 'N/A',
+                  frequency: med.frequency || 'N/A',
+                  startDate,
+                  endDate,
+                  sideEffects: med.sideEffects || [],
+                  status: 'active',
+                },
+              });
+            })
+          );
+          
+          // Create appointments
+          await Promise.all(
+            (extracted.appointments || []).map(async (appt: any) => {
+              const date = appt.date ? new Date(appt.date) : new Date();
+              return prisma.appointment.create({
+                data: {
+                  userId: userContext.userId,
+                  memberId: targetMemberId,
+                  doctorName: appt.doctorName || 'Doctor',
+                  specialty: appt.specialty || 'General',
+                  hospital: appt.hospital || '',
+                  date,
+                  time: appt.time || '10:00 AM',
+                  notes: appt.notes || '',
+                  status: 'scheduled',
+                },
+              });
+            })
+          );
+          
+          // Create reminders
+          await Promise.all(
+            (extracted.reminders || []).map(async (rem: any) => {
+              const date = rem.date ? new Date(rem.date) : new Date();
+              return prisma.reminder.create({
+                data: {
+                  userId: userContext.userId,
+                  memberId: targetMemberId,
+                  title: rem.title || 'Reminder',
+                  description: rem.type ? `Type: ${rem.type}` : '',
+                  type: rem.type || 'other',
+                  date,
+                  time: rem.time || '09:00 AM',
+                  frequency: 'once',
+                  priority: 'medium',
+                  status: 'active',
+                },
+              });
+            })
+          );
+          
+          // Update report status to analyzed
+          await prisma.healthReport.update({
+            where: { id: report.id },
+            data: {
+              status: 'analyzed',
+              analysis: {
+                extracted,
+                autoExtracted: true,
+                extractedAt: new Date().toISOString(),
+              }
+            }
+          });
+        } catch (error) {
+          console.error('Error during auto-extraction:', error);
+          // Don't fail the report creation if extraction fails
+        }
+      }
+      
+      // Return the report with updated data
+      return await prisma.healthReport.findUnique({
+        where: { id: report.id },
         include: { member: true }
       });
     },

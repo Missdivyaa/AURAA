@@ -114,8 +114,6 @@ const GET_APPOINTMENTS = `
   }
 `
 
-<<<<<<< HEAD
-=======
 const GET_DASHBOARD_STATS = `
   query GetDashboardStats {
     dashboardStats {
@@ -131,7 +129,6 @@ const GET_DASHBOARD_STATS = `
   }
 `
 
->>>>>>> f777a20 (Connect dashboard stats to backend - Add GraphQL dashboardStats query and resolver, update dashboard to fetch stats from backend API)
 export default function UserDashboard() {
   const { isSignedIn, user, isLoaded } = useUser()
   const { getToken } = useAuth()
@@ -192,14 +189,6 @@ export default function UserDashboard() {
       
       console.log('✅ Got authentication token')
       
-<<<<<<< HEAD
-      // Fetch family members and related data from GraphQL API
-      const data = await graphqlRequest(GET_FAMILY_MEMBERS, {}, token)
-      const appointmentsData = await graphqlRequest(GET_APPOINTMENTS, {}, token)
-      
-      console.log('🔍 Dashboard: Raw family members response:', data)
-      console.log('🔍 Dashboard: Raw appointments response:', appointmentsData)
-=======
       // Fetch family members, appointments, and dashboard stats from GraphQL API
       const data = await graphqlRequest(GET_FAMILY_MEMBERS, {}, token)
       const appointmentsData = await graphqlRequest(GET_APPOINTMENTS, {}, token)
@@ -213,7 +202,6 @@ export default function UserDashboard() {
       if (statsData && statsData.dashboardStats) {
         setDashboardStats(statsData.dashboardStats)
       }
->>>>>>> f777a20 (Connect dashboard stats to backend - Add GraphQL dashboardStats query and resolver, update dashboard to fetch stats from backend API)
       
       if (!data || !data.familyMembers) {
         throw new Error('Invalid response from backend')

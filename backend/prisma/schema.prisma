@@ -76,7 +76,11 @@ model HealthReport {
   fileSize      Int?
   extractedText String?
   analysis      Json?
-  status        String   @default("uploaded") // uploaded, processing, analyzed, error
+  status        String   @default("uploaded") // uploaded, processing, validated, analyzed, error, rejected
+  validationStatus String? // valid, invalid, pending
+  accuracyScore Float? // 0.0 to 1.0 (0% to 100%)
+  matchedTerms  String[] // Medical terms found in the report
+  rejectionReason String? // Reason if validation fails
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 

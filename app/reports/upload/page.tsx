@@ -2,9 +2,9 @@
 
 import { useState, useRef, useEffect } from 'react'
 import { motion } from 'framer-motion'
+import { useUser, useAuth } from '@clerk/nextjs'
 import Navigation from '@/components/Navigation'
-import { aiAnalysisService, HealthData } from '@/lib/ai-analysis-service'
-import { getAllMyFamilyMembers } from '@/lib/my-family-data'
+import { graphqlRequest } from '@/lib/graphql-client'
 import {
   ArrowLeft,
   Upload,
@@ -15,7 +15,9 @@ import {
   CheckCircle,
   User,
   Cloud,
-  Brain
+  Brain,
+  AlertCircle,
+  Loader
 } from 'lucide-react'
 
 interface UploadedFile {
@@ -42,45 +44,80 @@ interface FamilyMember {
   relationship: string
 }
 
+const GET_FAMILY_MEMBERS = `
+  query GetFamilyMembers {
+    familyMembers {
+      id
+      name
+      relationship
+    }
+  }
+`
+
+const CREATE_HEALTH_REPORT = `
+  mutation CreateHealthReport($input: CreateHealthReportInput!) {
+    createHealthReport(input: $input) {
+      id
+      fileName
+      fileType
+      fileUrl
+      fileSize
+      status
+      validationStatus
+      accuracyScore
+      matchedTerms
+      rejectionReason
+      extractedText
+      analysis
+      memberId
+      createdAt
+    }
+  }
+`
+
 export default function UploadReports() {
+  const { isSignedIn, user, isLoaded } = useUser()
+  const { getToken } = useAuth()
   const [familyMembers, setFamilyMembers] = useState<FamilyMember[]>([])
   const [selectedMember, setSelectedMember] = useState<string>('')
   const [isUploading, setIsUploading] = useState(false)
   const [isAnalyzing, setIsAnalyzing] = useState(false)
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([])
+  const [error, setError] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     const loadMembers = async () => {
+      if (!isLoaded || !isSignedIn || !user) return
+      
       try {
-        const res = await fetch('/api/family-members', { cache: 'no-store' })
-        if (res.ok) {
-          const data = await res.json()
-          const apiMembers: FamilyMember[] = Array.isArray(data)
-            ? data.map((m: any) => ({ id: m.id, name: m.name || '', relationship: m.relationship || 'Family Member' }))
-            : []
-          // Merge with local demo data ensuring uniqueness by id
-          const local = getAllMyFamilyMembers().map(m => ({ id: m.id, name: m.name, relationship: m.relationship }))
-          const mergedMap = new Map<string, FamilyMember>()
-          ;[...apiMembers, ...local].forEach(m => {
-            if (m && m.id) mergedMap.set(m.id, { id: m.id, name: m.name || '(Unnamed)', relationship: m.relationship || 'Family Member' })
-          })
-          const merged = Array.from(mergedMap.values())
-          if (merged.length) {
-            setFamilyMembers(merged)
-            setSelectedMember(merged[0].id)
-            return
+        const token = await getToken()
+        if (!token) return
+        
+        // Load family members from GraphQL backend
+        const data = await graphqlRequest(GET_FAMILY_MEMBERS, {}, token)
+        if (data && data.familyMembers) {
+          const members = data.familyMembers.map((m: any) => ({
+            id: m.id,
+            name: m.name || '',
+            relationship: m.relationship || 'Family Member'
+          }))
+          setFamilyMembers(members)
+          if (members.length > 0) {
+            setSelectedMember(members[0].id)
           }
         }
-      } catch (_) {
-        // fall back to local
+      } catch (error) {
+        console.error('Error loading family members:', error)
+        // Fallback to empty array
+        setFamilyMembers([])
       }
-      const local = getAllMyFamilyMembers().map(m => ({ id: m.id, name: m.name, relationship: m.relationship }))
-      setFamilyMembers(local)
-      if (local[0]) setSelectedMember(local[0].id)
     }
-    loadMembers()
-  }, [])
+    
+    if (isLoaded && isSignedIn && user) {
+      loadMembers()
+    }
+  }, [isLoaded, isSignedIn, user, getToken])
 
   const handleFiles = async (files: FileList) => {
     if (!selectedMember) {
@@ -88,15 +125,128 @@ export default function UploadReports() {
       return
     }
 
+    if (!user || !isSignedIn) {
+      alert('Please sign in to upload reports')
+      return
+    }
+
     setIsUploading(true)
+    setError(null)
+    
     try {
-      const MEDICAL_THRESHOLD = 0.6 // acceptance threshold (60%)
+      const token = await getToken()
+      if (!token) {
+        throw new Error('No authentication token available')
+      }
+
+      // Derive backend URL from GraphQL endpoint
+      const graphqlEndpoint = process.env.NEXT_PUBLIC_GRAPHQL_ENDPOINT || 'http://localhost:4000/graphql'
+      const backendUrl = graphqlEndpoint.replace('/graphql', '')
       const accepted: UploadedFile[] = []
       const rejected: UploadedFile[] = []
+
       for (const [index, file] of Array.from(files).entries()) {
-        const nameLower = file.name.toLowerCase()
-        // Hard guard: obvious non-medical academic results should be rejected explicitly
-        if ((/\bsem(ester)?\b/.test(nameLower) || nameLower.includes('marksheet')) && nameLower.includes('result')) {
+        try {
+          // Step 1: Upload file to backend for validation
+          const formData = new FormData()
+          formData.append('file', file)
+
+          const uploadResponse = await fetch(`${backendUrl}/api/upload/health-report`, {
+            method: 'POST',
+            body: formData,
+            headers: {
+              'Authorization': `Bearer ${token}`
+            }
+          })
+
+          if (!uploadResponse.ok) {
+            throw new Error(`Upload failed: ${uploadResponse.statusText}`)
+          }
+
+          const uploadData = await uploadResponse.json()
+          const fileInfo = uploadData.file
+          const validation = uploadData.validation
+
+          // Step 2: Create health report in database via GraphQL
+          if (validation.isValid) {
+            setIsAnalyzing(true)
+            
+            try {
+              const reportData = await graphqlRequest(CREATE_HEALTH_REPORT, {
+                input: {
+                  memberId: selectedMember,
+                  fileName: fileInfo.fileName,
+                  fileType: fileInfo.fileType,
+                  fileUrl: fileInfo.fileUrl,
+                  fileSize: fileInfo.fileSize,
+                  extractedText: fileInfo.extractedText,
+                  autoExtract: true // Automatically extract medications/appointments/reminders
+                }
+              }, token)
+
+              const report = reportData.createHealthReport
+
+              accepted.push({
+                id: report.id,
+                name: file.name,
+                size: formatFileSize(file.size),
+                type: file.type,
+                category: 'medical',
+                uploadDate: new Date().toISOString().split('T')[0],
+                familyMemberId: selectedMember,
+                familyMemberName: familyMembers.find(m => m.id === selectedMember)?.name || '',
+                description: '',
+                tags: [],
+                medicalScore: report.accuracyScore || validation.accuracyScore,
+                matchedTerms: report.matchedTerms || validation.matchedTerms || [],
+                uploaded: true,
+                url: fileInfo.fileUrl
+              })
+
+              console.log('✅ Report uploaded and processed:', report.id)
+              console.log('📊 Auto-extracted data:', report.analysis)
+            } catch (graphqlError: any) {
+              console.error('Error creating health report:', graphqlError)
+              rejected.push({
+                id: `file-${Date.now()}-${index}`,
+                name: file.name,
+                size: formatFileSize(file.size),
+                type: file.type,
+                category: 'general',
+                uploadDate: new Date().toISOString().split('T')[0],
+                familyMemberId: selectedMember,
+                familyMemberName: familyMembers.find(m => m.id === selectedMember)?.name || '',
+                description: '',
+                tags: [],
+                medicalScore: validation.accuracyScore,
+                matchedTerms: validation.matchedTerms || [],
+                uploaded: false,
+                rejectionReason: `Failed to save report: ${graphqlError.message || 'Unknown error'}`,
+                url: ''
+              })
+            }
+          } else {
+            // Report validation failed
+            rejected.push({
+              id: `file-${Date.now()}-${index}`,
+              name: file.name,
+              size: formatFileSize(file.size),
+              type: file.type,
+              category: 'general',
+              uploadDate: new Date().toISOString().split('T')[0],
+              familyMemberId: selectedMember,
+              familyMemberName: familyMembers.find(m => m.id === selectedMember)?.name || '',
+              description: '',
+              tags: [],
+              medicalScore: validation.accuracyScore,
+              matchedTerms: validation.matchedTerms || [],
+              uploaded: false,
+              rejectionReason: validation.rejectionReason || 'Report validation failed',
+              url: ''
+            })
+          }
+        } catch (fileError: any) {
+          console.error(`Error processing file ${file.name}:`, fileError)
           rejected.push({
             id: `file-${Date.now()}-${index}`,
             name: file.name,
@@ -111,69 +261,30 @@ export default function UploadReports() {
             medicalScore: 0,
             matchedTerms: [],
             uploaded: false,
-            rejectionReason: 'Detected as an academic semester result, not a medical report.',
+            rejectionReason: `Upload error: ${fileError.message || 'Unknown error'}`,
             url: ''
           })
-          continue
         }
-        if (!aiAnalysisService.isAllowedExtension(file)) {
-          alert(`❌ ${file.name}: Unsupported file type`)
-          continue
-        }
-        const ocr = await aiAnalysisService.processDocument(file)
-        const { score, matched } = aiAnalysisService.scoreMedicalText(ocr.text)
-        const finalAccuracy = score
-        if (finalAccuracy < MEDICAL_THRESHOLD) {
-          const reason = matched.length === 0
-            ? 'No medical terms detected in the document.'
-            : `Detected medical terms are insufficient for a valid report.`
-          // Keep rejected files in the list with an unsuccessful status (mock UX)
-          rejected.push({
-            id: `file-${Date.now()}-${index}`,
-            name: file.name,
-            size: formatFileSize(file.size),
-            type: file.type,
-            category: 'general',
-            uploadDate: new Date().toISOString().split('T')[0],
-            familyMemberId: selectedMember,
-            familyMemberName: familyMembers.find(m => m.id === selectedMember)?.name || '',
-            description: '',
-            tags: [],
-            medicalScore: finalAccuracy,
-            matchedTerms: matched,
-            uploaded: false,
-            rejectionReason: reason,
-            url: ''
-          })
-          continue
-        }
-
-        accepted.push({
-          id: `file-${Date.now()}-${index}`,
-          name: file.name,
-          size: formatFileSize(file.size),
-          type: file.type,
-          category: 'general',
-          uploadDate: new Date().toISOString().split('T')[0],
-          familyMemberId: selectedMember,
-          familyMemberName: familyMembers.find(m => m.id === selectedMember)?.name || '',
-          description: '',
-          tags: [],
-          medicalScore: finalAccuracy,
-          matchedTerms: matched,
-          uploaded: true,
-          url: URL.createObjectURL(file)
-        })
       }
 
       if (accepted.length === 0 && rejected.length === 0) return
       setUploadedFiles(prev => [...prev, ...rejected, ...accepted])
 
-      setIsAnalyzing(true)
-      // simulate downstream analysis quickly
-      await new Promise(resolve => setTimeout(resolve, 500))
-    } catch (e) {
+      // Show success message if any files were accepted
+      if (accepted.length > 0) {
+        const extractedCount = accepted.reduce((sum, file) => {
+          // Check if report has auto-extracted data
+          return sum + (file.uploaded ? 1 : 0)
+        }, 0)
+        
+        if (extractedCount > 0) {
+          console.log(`✅ Successfully uploaded ${accepted.length} report(s). Medications, appointments, and reminders have been automatically extracted and saved.`)
+        }
+      }
+
+    } catch (e: any) {
       console.error('Error uploading files', e)
+      setError(e.message || 'Failed to upload files. Please try again.')
     } finally {
       setIsUploading(false)
       setIsAnalyzing(false)
@@ -293,7 +404,14 @@ export default function UploadReports() {
             {isAnalyzing && (
               <div className="mt-4 p-3 bg-purple-50 rounded-lg flex items-center space-x-3">
                 <Brain className="w-4 h-4 text-purple-600 animate-pulse" />
-                <span className="text-purple-800 font-semibold text-sm">Validating reports...</span>
+                <span className="text-purple-800 font-semibold text-sm">Validating reports and extracting data...</span>
+              </div>
+            )}
+
+            {error && (
+              <div className="mt-4 p-3 bg-red-50 rounded-lg flex items-center space-x-3">
+                <AlertCircle className="w-4 h-4 text-red-600" />
+                <span className="text-red-800 font-semibold text-sm">{error}</span>
               </div>
             )}
           </div>
@@ -313,17 +431,23 @@ export default function UploadReports() {
                         <Icon className="w-5 h-5 text-gray-600" />
                         <div>
                           <div className="font-semibold text-gray-900">{file.name}</div>
-                          <div className="text-sm text-gray-500">{file.size} • {file.familyMemberName} • Accuracy {Math.round(file.medicalScore * 100)}%</div>
+                          <div className="text-sm text-gray-500">
+                            {file.size} • {file.familyMemberName} • Accuracy {Math.round((file.medicalScore || 0) * 100)}%
+                          </div>
                           {file.matchedTerms && file.matchedTerms.length > 0 && file.uploaded && (
-                            <div className="text-xs text-gray-500 mt-1">Matched terms: {file.matchedTerms.slice(0,6).join(', ')}{file.matchedTerms.length > 6 ? '…' : ''}</div>
+                            <div className="text-xs text-gray-500 mt-1">
+                              Matched terms: {file.matchedTerms.slice(0,6).join(', ')}{file.matchedTerms.length > 6 ? '…' : ''}
+                            </div>
                           )}
-                          {file.uploaded && file.medicalScore >= 0.6 ? (
+                          {file.uploaded && (file.medicalScore || 0) >= 0.6 ? (
                             <div className="inline-flex items-center mt-1 text-xs font-semibold text-green-700 bg-green-50 border border-green-200 rounded px-2 py-0.5">
-                              <CheckCircle className="w-3 h-3 mr-1" /> Uploaded successfully
+                              <CheckCircle className="w-3 h-3 mr-1" /> 
+                              Validated & Saved • Medications, appointments, and reminders extracted automatically
                             </div>
                           ) : (
                             <div className="inline-flex items-center mt-1 text-xs font-semibold text-red-700 bg-red-50 border border-red-200 rounded px-2 py-0.5">
-                              <span>Upload unsuccessful{file.rejectionReason ? ` — ${file.rejectionReason}` : ''}</span>
+                              <AlertCircle className="w-3 h-3 mr-1" />
+                              <span>Rejected{file.rejectionReason ? ` — ${file.rejectionReason}` : ''}</span>
                             </div>
                           )}
                         </div>

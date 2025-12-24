@@ -59,6 +59,10 @@ export const typeDefs = gql`
     extractedText: String
     analysis: JSON
     status: String!
+    validationStatus: String
+    accuracyScore: Float
+    matchedTerms: [String!]!
+    rejectionReason: String
     createdAt: DateTime!
     updatedAt: DateTime!
     user: User!
@@ -262,6 +266,7 @@ export const typeDefs = gql`
     fileSize: Int
     extractedText: String
     analysis: JSON
+    autoExtract: Boolean # If true, automatically extract medications/appointments/reminders after validation
   }
 
   input CreateAIInsightInput {
