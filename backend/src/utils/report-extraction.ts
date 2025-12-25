@@ -228,17 +228,45 @@ function parseReportFallback(rawText: string): ExtractedReportData {
   const medicationSection = rawText.match(/prescribed\s+medications?[:\s]+(.*?)(?:\n\n|lifestyle|lab|future|appointment|$)/is);
   if (medicationSection) {
     const medText = medicationSection[1];
-    // Pattern: Medication name, dosage, frequency
+    // Pattern: Medication name (can include numbers like D3), dosage, frequency
+    // Split by numbered list (1., 2., etc.) or newlines
     const medLines = medText.split(/\n|\d+\./).filter(line => line.trim().length > 5);
     
     medLines.forEach(line => {
-      const medMatch = line.match(/([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\s+(\d+\s*(?:mg|ml|mcg|units?|iu|tablets?|capsules?))\s*(?:[-–]\s*)?(.*?)(?:\n|$)/i);
+      // Improved pattern: Medication name can include numbers (like Vitamin D3), followed by dosage
+      // Pattern matches: "Metformin 500 mg", "Vitamin D3 60,000 IU", "Amlodipine 5 mg"
+      const medMatch = line.match(/([A-Z][A-Za-z0-9]+(?:\s+[A-Z][A-Za-z0-9]+)*)\s+(\d+(?:,\d+)?\s*(?:mg|ml|mcg|units?|iu|tablets?|capsules?))\s*(?:[-–]\s*)?(.*?)(?:\n|$)/i);
       if (medMatch) {
-        medications.push({
-          name: medMatch[1].trim(),
-          dosage: medMatch[2].trim(),
-          frequency: medMatch[3]?.trim() || line.match(/(?:once|twice|thrice|daily|weekly|monthly|after|before)\s+(?:daily|meals?|day|week|month|lunch|breakfast|dinner)/i)?.[0] || 'As prescribed',
-        });
+        const name = medMatch[1].trim();
+        const dosage = medMatch[2].trim();
+        // Extract frequency from the rest of the line
+        const frequencyMatch = line.match(/(?:[-–]\s*)?(.*?)(?:\s+for\s+\d+|$)/i);
+        const frequency = frequencyMatch?.[1]?.trim() || medMatch[3]?.trim() || line.match(/(?:once|twice|thrice|daily|weekly|monthly|after|before)\s+(?:daily|meals?|day|week|month|lunch|breakfast|dinner|meals)/i)?.[0] || 'As prescribed';
+        
+        if (name && name.length > 0) {
+          medications.push({
+            name,
+            dosage,
+            frequency,
+          });
+        }
+      } else {
+        // Fallback: Try to extract medication name even if pattern doesn't fully match
+        // Look for lines that start with a capitalized word followed by numbers (dosage)
+        const fallbackMatch = line.match(/([A-Z][A-Za-z0-9]+(?:\s+[A-Z][A-Za-z0-9]+)*)\s+(\d+)/);
+        if (fallbackMatch) {
+          const name = fallbackMatch[1].trim();
+          const dosagePart = line.match(/(\d+(?:,\d+)?\s*(?:mg|ml|mcg|units?|iu))/i);
+          const frequencyPart = line.match(/(?:[-–]\s*)?(.*?)(?:\s+for\s+\d+|$)/i);
+          
+          if (name && name.length > 0) {
+            medications.push({
+              name,
+              dosage: dosagePart?.[0]?.trim() || fallbackMatch[2] + ' mg',
+              frequency: frequencyPart?.[1]?.trim() || 'As prescribed',
+            });
+          }
+        }
       }
     });
   }

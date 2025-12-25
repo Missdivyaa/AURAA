@@ -205,7 +205,13 @@ export default function EmergencyID() {
             id
             name
             dosage
+            frequency
+            status
             memberId
+            member {
+              id
+              name
+            }
           }
         }
       `
@@ -216,9 +222,21 @@ export default function EmergencyID() {
       
       // Generate emergency data from family members and medications
       const emergencyDataList: EmergencyData[] = familyMembers.map((member) => {
-        // Get medications for this family member
-        const memberMedications = medications.filter((med: any) => med.memberId === member.id)
-        const medicationNames = memberMedications.map((med: any) => `${med.name} ${med.dosage}`)
+        // Get medications for this family member (only active medications)
+        const memberMedications = medications.filter((med: any) => 
+          med.memberId === member.id && med.status === 'active'
+        )
+        // Format medications with name, dosage, and frequency
+        const medicationNames = memberMedications.map((med: any) => {
+          const parts = [med.name]
+          if (med.dosage && med.dosage.trim() !== 'N/A') {
+            parts.push(med.dosage)
+          }
+          if (med.frequency && med.frequency.trim() !== 'N/A') {
+            parts.push(`(${med.frequency})`)
+          }
+          return parts.join(' ')
+        })
         
         // Parse emergency contacts from member data
         const emergencyContacts = []
@@ -415,7 +433,8 @@ export default function EmergencyID() {
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50 pb-8">
       <Navigation />
       
-      <div className="container mx-auto px-4 pt-24 pb-8">
+      <div className="pt-20 px-4 sm:px-6 lg:px-8">
+        <div className="max-w-7xl mx-auto">
         {/* Header */}
         <motion.div
           initial={{ opacity: 0, y: -20 }}
@@ -431,10 +450,11 @@ export default function EmergencyID() {
           transition={{ delay: 0.1 }}
           className="mb-6"
         >
-          <div className="flex items-center space-x-4">
-            <label className="text-base font-semibold text-gray-900 whitespace-nowrap">
-              Select Family Member:
-            </label>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-4">
+              <label className="text-base font-semibold text-gray-900 whitespace-nowrap">
+                Select Family Member:
+              </label>
             <div className="relative">
               <button
                 onClick={() => setShowDropdown(!showDropdown)}
@@ -482,6 +502,18 @@ export default function EmergencyID() {
                 </div>
               )}
             </div>
+            </div>
+            <button
+              onClick={() => {
+                loadEmergencyData()
+              }}
+              disabled={loading}
+              className="inline-flex items-center space-x-2 px-3 py-2 bg-gray-600 text-white rounded-lg font-medium hover:bg-gray-700 transition-colors shadow-md disabled:opacity-50 text-sm ml-4"
+              title="Refresh medications and emergency data"
+            >
+              <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+              <span>Refresh</span>
+            </button>
           </div>
         </motion.div>
 
@@ -595,22 +627,36 @@ export default function EmergencyID() {
                       </div>
                     )}
 
-                    {/* Medications */}
-                    {selectedEmergencyData.medications.length > 0 && (
-                      <div className="bg-blue-50 rounded-xl p-4">
-                        <h4 className="font-semibold text-blue-900 mb-2 flex items-center space-x-2">
-                          <Pill className="w-4 h-4" />
-                          <span>Current Medications</span>
-                        </h4>
-                        <div className="space-y-1">
+                    {/* Medications - Always show this section */}
+                    <div className="bg-blue-50 rounded-xl p-4">
+                      <h4 className="font-semibold text-blue-900 mb-2 flex items-center space-x-2">
+                        <Pill className="w-4 h-4" />
+                        <span>Current Medications</span>
+                        {selectedEmergencyData.medications.length > 0 && (
+                          <span className="ml-2 px-2 py-0.5 bg-blue-200 text-blue-800 rounded-full text-xs font-medium">
+                            {selectedEmergencyData.medications.length}
+                          </span>
+                        )}
+                      </h4>
+                      {selectedEmergencyData.medications.length > 0 ? (
+                        <div className="space-y-2">
                           {selectedEmergencyData.medications.map((medication, index) => (
-                            <div key={index} className="text-sm text-blue-800">
-                              {medication}
+                            <div key={index} className="flex items-start space-x-2 p-2 bg-white rounded-lg border border-blue-200">
+                              <Pill className="w-4 h-4 text-blue-600 mt-0.5 flex-shrink-0" />
+                              <div className="flex-1">
+                                <div className="text-sm font-medium text-blue-900">
+                                  {medication}
+                                </div>
+                              </div>
                             </div>
                           ))}
                         </div>
-                      </div>
-                    )}
+                      ) : (
+                        <div className="text-sm text-blue-700 italic py-2">
+                          No active medications recorded for {selectedMemberData.name}
+                        </div>
+                      )}
+                    </div>
 
                     {/* Emergency Contacts */}
                     <div className="bg-green-50 rounded-xl p-4">
@@ -674,6 +720,7 @@ export default function EmergencyID() {
             </div>
           </div>
         </motion.div>
+        </div>
       </div>
     </div>
   )

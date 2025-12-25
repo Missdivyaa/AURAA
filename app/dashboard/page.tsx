@@ -513,7 +513,11 @@ export default function UserDashboard() {
               className="space-y-8"
             >
               {/* Health Overview */}
-              <HealthOverview familyMembers={familyMembers} dashboardStats={dashboardStats} />
+              <HealthOverview 
+                familyMembers={familyMembers} 
+                dashboardStats={dashboardStats}
+                onRefresh={loadFamilyMembers}
+              />
               
               {/* Quick Actions */}
               <QuickActions />

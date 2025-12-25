@@ -1,6 +1,8 @@
 'use client'
 
+import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
+import { useAuth } from '@clerk/nextjs'
 import { 
   Heart, 
   Activity, 
@@ -10,6 +12,29 @@ import {
   Calendar,
   Pill
 } from 'lucide-react'
+import HealthAlertsModal, { HealthAlert } from './HealthAlertsModal'
+import UpcomingAppointmentsModal, { UpcomingAppointment } from './UpcomingAppointmentsModal'
+import { graphqlRequest } from '@/lib/graphql-client'
+
+const GET_UPCOMING_APPOINTMENTS = `
+  query GetUpcomingAppointments {
+    appointments {
+      id
+      doctorName
+      specialty
+      hospital
+      date
+      time
+      notes
+      status
+      memberId
+      member {
+        id
+        name
+      }
+    }
+  }
+`
 
 interface FamilyMember {
   id: string
@@ -39,6 +64,88 @@ interface HealthOverviewProps {
 }
 
 export default function HealthOverview({ familyMembers, dashboardStats }: HealthOverviewProps) {
+  const [showAlertsModal, setShowAlertsModal] = useState(false)
+  const [showAppointmentsModal, setShowAppointmentsModal] = useState(false)
+  const [upcomingAppointments, setUpcomingAppointments] = useState<UpcomingAppointment[]>([])
+  const [loadingAppointments, setLoadingAppointments] = useState(false)
+  const { getToken } = useAuth()
+
+  // Fetch appointments on mount and when dashboard stats change to keep count accurate
+  useEffect(() => {
+    fetchUpcomingAppointments()
+  }, [dashboardStats?.upcomingAppointments])
+
+  // Always fetch fresh appointments when modal opens
+  useEffect(() => {
+    if (showAppointmentsModal) {
+      fetchUpcomingAppointments()
+    }
+  }, [showAppointmentsModal])
+
+  const fetchUpcomingAppointments = async () => {
+    try {
+      setLoadingAppointments(true)
+      const token = await getToken()
+      if (!token) {
+        console.warn('No auth token available')
+        return
+      }
+
+      console.log('🔄 Fetching upcoming appointments...')
+      const data = await graphqlRequest(GET_UPCOMING_APPOINTMENTS, {}, token)
+      
+      console.log('📅 Raw appointments data:', data)
+      
+      if (data?.appointments) {
+        const now = new Date()
+        now.setHours(0, 0, 0, 0) // Set to start of day for accurate comparison
+        
+        const upcoming = data.appointments
+          .map((appt: any) => {
+            try {
+              const apptDate = new Date(appt.date)
+              apptDate.setHours(0, 0, 0, 0)
+              const isFuture = apptDate.getTime() >= now.getTime()
+              const isNotCancelled = appt.status?.toLowerCase() !== 'cancelled'
+              
+              return {
+                appt,
+                isUpcoming: isFuture && isNotCancelled,
+                apptDate
+              }
+            } catch (error) {
+              console.error('Error parsing appointment date:', appt.date, error)
+              return { appt, isUpcoming: false, apptDate: null }
+            }
+          })
+          .filter((item: any) => item.isUpcoming)
+          .map((item: any) => ({
+            id: item.appt.id,
+            doctorName: item.appt.doctorName || 'Doctor',
+            specialty: item.appt.specialty || 'General',
+            hospital: item.appt.hospital || undefined,
+            date: item.appt.date,
+            time: item.appt.time || '10:00 AM',
+            notes: item.appt.notes || undefined,
+            status: item.appt.status || 'scheduled',
+            memberName: item.appt.member?.name,
+            memberId: item.appt.memberId
+          }))
+        
+        console.log(`✅ Found ${upcoming.length} upcoming appointments:`, upcoming)
+        setUpcomingAppointments(upcoming)
+      } else {
+        console.warn('No appointments data in response')
+        setUpcomingAppointments([])
+      }
+    } catch (error) {
+      console.error('❌ Error fetching upcoming appointments:', error)
+      setUpcomingAppointments([])
+    } finally {
+      setLoadingAppointments(false)
+    }
+  }
+  
   // Use backend stats if available, otherwise calculate from family members
   const totalMembers = dashboardStats?.totalMembers ?? familyMembers.length
   const averageHealthScore = dashboardStats?.averageHealthScore ?? 
@@ -47,65 +154,131 @@ export default function HealthOverview({ familyMembers, dashboardStats }: Health
       : 0)
   const totalMedications = dashboardStats?.totalMedications ?? 
     familyMembers.reduce((sum, member) => sum + member.medications, 0)
-  const upcomingAppointments = dashboardStats?.upcomingAppointments ?? 
-    familyMembers.filter(member => {
-      if (!member.nextAppointment || member.nextAppointment.trim() === '') return false
-      try {
-        const nextAppointment = new Date(member.nextAppointment)
-        const today = new Date()
-        const diffTime = nextAppointment.getTime() - today.getTime()
-        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24))
-        return diffDays <= 30 && diffDays >= 0
-      } catch {
-        return false
-      }
-    }).length
+  // Calculate upcoming appointments count
+  // Use fetched appointments if available (more accurate), otherwise use dashboard stats or calculate from members
+  const upcomingAppointmentsCount = upcomingAppointments.length > 0 
+    ? upcomingAppointments.length 
+    : (dashboardStats?.upcomingAppointments ?? 
+      familyMembers.filter(member => {
+        if (!member.nextAppointment || member.nextAppointment.trim() === '') return false
+        try {
+          const nextAppointment = new Date(member.nextAppointment)
+          const today = new Date()
+          const diffTime = nextAppointment.getTime() - today.getTime()
+          const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24))
+          return diffDays <= 30 && diffDays >= 0
+        } catch {
+          return false
+        }
+      }).length)
 
-  // Calculate alerts using the same logic as RecentActivity (fallback if no backend stats)
-  const calculateHealthAlerts = () => {
-    let alertCount = 0
+  // Generate detailed alerts from family member data
+  const generateDetailedAlerts = (): HealthAlert[] => {
+    const alerts: HealthAlert[] = []
+    const now = Date.now()
     
     familyMembers.forEach(member => {
-      // Count members with poor or fair health status
+      // Low health score alert
       if (member.status === 'poor' || member.status === 'fair') {
-        alertCount++
+        alerts.push({
+          id: `low-health-${member.id}`,
+          type: 'low_health_score',
+          severity: member.status === 'poor' ? 'high' : 'medium',
+          title: `${member.status === 'poor' ? 'Low' : 'Fair'} Health Score`,
+          description: `${member.name} has a health score of ${member.healthScore}%, which requires attention. Consider scheduling a checkup or reviewing their health conditions.`,
+          memberName: member.name,
+          memberId: member.id,
+          actionUrl: `/dashboard?tab=overview&memberId=${member.id}&highlight=health`,
+          actionText: 'View Health Details'
+        })
       }
       
-      // Count members with overdue checkups (more than 1 year)
+      // Overdue checkup alert
       if (member.lastCheckup && member.lastCheckup.trim() !== '') {
         try {
           const checkupDate = new Date(member.lastCheckup)
-          const daysSince = Math.floor((Date.now() - checkupDate.getTime()) / (1000 * 60 * 60 * 24))
+          const daysSince = Math.floor((now - checkupDate.getTime()) / (1000 * 60 * 60 * 24))
           if (daysSince > 365) {
-            alertCount++
+            alerts.push({
+              id: `overdue-checkup-${member.id}`,
+              type: 'overdue_checkup',
+              severity: daysSince > 730 ? 'high' : 'medium',
+              title: 'Overdue Checkup',
+              description: `${member.name}'s last checkup was ${Math.floor(daysSince / 30)} months ago. It's recommended to schedule a routine checkup annually.`,
+              memberName: member.name,
+              memberId: member.id,
+              date: `${Math.floor(daysSince / 30)} months ago`,
+              actionUrl: `/appointments?memberId=${member.id}&action=schedule`,
+              actionText: 'Schedule Appointment'
+            })
           }
         } catch (error) {
-          // Invalid date counts as alert
-          alertCount++
+          // Invalid date - no checkup recorded
+          alerts.push({
+            id: `no-checkup-${member.id}`,
+            type: 'no_checkup',
+            severity: 'medium',
+            title: 'No Checkup Recorded',
+            description: `No recent checkup date found for ${member.name}. Consider scheduling a routine health checkup.`,
+            memberName: member.name,
+            memberId: member.id,
+            actionUrl: `/appointments?memberId=${member.id}&action=schedule`,
+            actionText: 'Schedule Appointment'
+          })
         }
       } else {
-        // No checkup date counts as alert
-        alertCount++
+        // No checkup date
+        alerts.push({
+          id: `no-checkup-${member.id}`,
+          type: 'no_checkup',
+          severity: 'medium',
+          title: 'No Checkup Recorded',
+          description: `No recent checkup date found for ${member.name}. Consider scheduling a routine health checkup.`,
+          memberName: member.name,
+          memberId: member.id,
+          actionUrl: `/appointments?memberId=${member.id}&action=schedule`,
+          actionText: 'Schedule Appointment'
+        })
       }
       
-      // Count urgent upcoming appointments (within 7 days)
+      // Urgent upcoming appointment alert
       if (member.nextAppointment && member.nextAppointment.trim() !== '') {
         try {
           const appointmentDate = new Date(member.nextAppointment)
-          const daysTo = Math.floor((appointmentDate.getTime() - Date.now()) / (1000 * 60 * 60 * 24))
+          const daysTo = Math.floor((appointmentDate.getTime() - now) / (1000 * 60 * 60 * 24))
           if (daysTo <= 7 && daysTo >= 0) {
-            alertCount++
+            alerts.push({
+              id: `urgent-appointment-${member.id}`,
+              type: 'urgent_appointment',
+              severity: daysTo <= 2 ? 'high' : 'medium',
+              title: 'Upcoming Appointment Soon',
+              description: `${member.name} has an appointment ${daysTo === 0 ? 'today' : daysTo === 1 ? 'tomorrow' : `in ${daysTo} days`}. Make sure to prepare and attend.`,
+              memberName: member.name,
+              memberId: member.id,
+              date: daysTo === 0 ? 'Today' : daysTo === 1 ? 'Tomorrow' : `In ${daysTo} days`,
+              actionUrl: `/appointments?memberId=${member.id}&highlight=upcoming`,
+              actionText: 'View Appointment'
+            })
           }
         } catch (error) {
-          // Invalid date doesn't count as alert
+          // Invalid date doesn't create alert
         }
       }
     })
     
-    return alertCount
+    // Sort by severity (high first)
+    return alerts.sort((a, b) => {
+      const severityOrder = { high: 0, medium: 1, low: 2 }
+      return severityOrder[a.severity] - severityOrder[b.severity]
+    })
   }
 
-  const healthAlerts = dashboardStats?.healthAlerts ?? calculateHealthAlerts()
+  const detailedAlerts = generateDetailedAlerts()
+  
+  // Always use the actual alert count from generated alerts
+  // This ensures the count matches exactly what's displayed in the modal
+  // We ignore dashboardStats.healthAlerts because it may count differently
+  const healthAlerts = detailedAlerts.length
 
   const overviewCards = [
     {
@@ -130,7 +303,7 @@ export default function HealthOverview({ familyMembers, dashboardStats }: Health
     },
     {
       title: 'Upcoming Appointments',
-      value: upcomingAppointments.toString(),
+      value: upcomingAppointmentsCount.toString(),
       icon: Calendar,
       color: 'from-purple-500 to-purple-600',
       bgColor: 'bg-purple-50',
@@ -146,7 +319,8 @@ export default function HealthOverview({ familyMembers, dashboardStats }: Health
       bgColor: 'bg-orange-50',
       iconColor: 'text-orange-600',
       trend: healthAlerts > 0 ? 'Needs attention' : 'All good',
-      trendColor: healthAlerts > 0 ? 'text-orange-600' : 'text-green-600'
+      trendColor: healthAlerts > 0 ? 'text-orange-600' : 'text-green-600',
+      clickable: healthAlerts > 0
     }
   ]
 
@@ -163,14 +337,26 @@ export default function HealthOverview({ familyMembers, dashboardStats }: Health
         <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-6">
           {overviewCards.map((card, index) => {
             const Icon = card.icon
+            const isClickable = card.title === 'Total Medications' || 
+                               (card.title === 'Health Alerts' && card.clickable) ||
+                               (card.title === 'Upcoming Appointments' && parseInt(card.value) > 0)
+            
+            const handleCardClick = () => {
+              if (card.title === 'Health Alerts' && card.clickable) {
+                setShowAlertsModal(true)
+              } else if (card.title === 'Upcoming Appointments' && parseInt(card.value) > 0) {
+                setShowAppointmentsModal(true)
+              }
+            }
+            
             return (
-              <motion.a
+              <motion.div
                 key={card.title}
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.6, delay: index * 0.1 }}
-                href={card.title === 'Total Medications' ? '/medications' : undefined}
-                className={`${card.bgColor} p-6 rounded-xl hover:shadow-lg transition-all duration-300 card-hover group ${card.title === 'Total Medications' ? 'cursor-pointer' : ''}`}
+                onClick={handleCardClick}
+                className={`${card.bgColor} p-6 rounded-xl hover:shadow-lg transition-all duration-300 card-hover group ${isClickable ? 'cursor-pointer' : ''}`}
               >
                 <div className="space-y-4">
                   <div className="flex items-center justify-between">
@@ -193,11 +379,28 @@ export default function HealthOverview({ familyMembers, dashboardStats }: Health
                     </div>
                   </div>
                 </div>
-              </motion.a>
+              </motion.div>
             )
           })}
         </div>
       </motion.div>
+
+      {/* Health Alerts Modal */}
+      <HealthAlertsModal
+        isOpen={showAlertsModal}
+        onClose={() => setShowAlertsModal(false)}
+        alerts={detailedAlerts}
+        totalAlerts={detailedAlerts.length}
+      />
+
+      {/* Upcoming Appointments Modal */}
+      <UpcomingAppointmentsModal
+        isOpen={showAppointmentsModal}
+        onClose={() => setShowAppointmentsModal(false)}
+        appointments={upcomingAppointments}
+        totalCount={upcomingAppointments.length}
+        loading={loadingAppointments}
+      />
 
       {/* Health Status Summary */}
       <motion.div

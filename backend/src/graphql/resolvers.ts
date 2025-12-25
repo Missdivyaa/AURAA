@@ -1,5 +1,7 @@
 import { PrismaClient } from '@prisma/client';
 import { extractDataFromReport } from '../utils/report-extraction';
+import { generateInsightsFromReport } from '../utils/insight-generator';
+import { generateHealthPredictions } from '../utils/prediction-generator';
 import { validateMedicalReport } from '../utils/report-validation';
 import { UserContext } from '../auth/user-context';
 
@@ -774,28 +776,57 @@ export const resolvers = {
           }
           
           // Create medications
+          console.log(`📋 Extracted medications count: ${extracted.medications?.length || 0}`);
+          console.log(`📋 Extracted medications:`, JSON.stringify(extracted.medications, null, 2));
+          
+          // Filter out medications with invalid or empty names
+          const validMedications = (extracted.medications || []).filter((med: any) => {
+            const name = (med.name || '').trim();
+            return name.length > 0 && name !== 'Medication'; // Don't create generic "Medication" entries
+          });
+          
+          console.log(`✅ Valid medications after filtering: ${validMedications.length}`);
+          
           const createdMedications = await Promise.all(
-            (extracted.medications || []).map(async (med: any) => {
-              const startDate = med.startDate ? new Date(med.startDate) : new Date();
-              const endDate = med.endDate ? new Date(med.endDate) : null;
-              
-              return prisma.medication.create({
-                data: {
-                  userId: userContext.userId,
-                  memberId: targetMemberId,
-                  name: med.name || 'Medication',
-                  dosage: med.dosage || 'N/A',
-                  frequency: med.frequency || 'N/A',
-                  startDate,
-                  endDate,
-                  sideEffects: med.sideEffects || [],
-                  status: 'active',
-                },
-              });
+            validMedications.map(async (med: any) => {
+              try {
+                const startDate = med.startDate ? new Date(med.startDate) : new Date();
+                const endDate = med.endDate ? new Date(med.endDate) : null;
+                
+                // Ensure name is not empty
+                const medicationName = (med.name || '').trim();
+                if (!medicationName || medicationName.length === 0) {
+                  console.warn(`⚠️ Skipping medication with empty name:`, med);
+                  return null;
+                }
+
+                const medication = await prisma.medication.create({
+                  data: {
+                    userId: userContext.userId,
+                    memberId: targetMemberId,
+                    name: medicationName,
+                    dosage: (med.dosage || '').trim() || 'N/A',
+                    frequency: (med.frequency || '').trim() || 'N/A',
+                    startDate,
+                    endDate,
+                    sideEffects: Array.isArray(med.sideEffects) ? med.sideEffects : [],
+                    status: 'active',
+                  },
+                });
+                
+                console.log(`✅ Created medication: ${medication.name}`);
+                return medication;
+              } catch (error: any) {
+                console.error(`❌ Error creating medication ${med.name}:`, error.message);
+                // Don't throw - continue with other medications
+                return null;
+              }
             })
           );
           
-          console.log(`✅ Created ${createdMedications.length} medications`);
+          // Filter out null values from failed creations
+          const successfulMedications = createdMedications.filter((med: any) => med !== null);
+          console.log(`✅ Successfully created ${successfulMedications.length} medications out of ${validMedications.length} valid medications`);
           
           // Create appointments
           const createdAppointments = await Promise.all(
@@ -857,6 +888,41 @@ export const resolvers = {
           
           console.log(`✅ Created ${createdReminders.length} reminders`);
           
+          // Generate AI insights from the extracted data
+          let createdInsights: any[] = [];
+          try {
+            const member = targetMemberId ? await prisma.familyMember.findFirst({
+              where: { id: targetMemberId, userId: userContext.userId }
+            }) : null;
+            
+            const insights = generateInsightsFromReport(extracted, member?.name);
+            console.log(`🤖 Generated ${insights.length} insights from report`);
+            
+            createdInsights = await Promise.all(
+              insights.map(insight =>
+                prisma.aIInsight.create({
+                  data: {
+                    userId: userContext.userId,
+                    memberId: targetMemberId,
+                    type: insight.type,
+                    title: insight.title,
+                    description: insight.description,
+                    severity: insight.severity,
+                    category: insight.category,
+                    data: insight.data,
+                    actionItems: insight.actionItems,
+                  },
+                  include: { member: true }
+                })
+              )
+            );
+            
+            console.log(`✅ Created ${createdInsights.length} AI insights`);
+          } catch (insightError: any) {
+            console.error('❌ Error generating insights:', insightError.message);
+            // Don't fail the report analysis if insights fail
+          }
+          
           // Update report status to analyzed
           await prisma.healthReport.update({
             where: { id: report.id },
@@ -866,10 +932,11 @@ export const resolvers = {
                 extracted,
                 autoExtracted: true,
                 extractedAt: new Date().toISOString(),
-                medicationsCreated: createdMedications.length,
+                medicationsCreated: successfulMedications.length,
                 appointmentsCreated: createdAppointments.length,
                 remindersCreated: createdReminders.length,
                 conditionsExtracted: extracted.conditions?.length || 0,
+                insightsCreated: createdInsights.length,
               }
             }
           });
@@ -1283,27 +1350,58 @@ export const resolvers = {
       const targetMemberId = memberId || report.memberId || null;
 
       // 4. Create medications
+      console.log(`📋 Extracted medications count: ${extracted.medications?.length || 0}`);
+      console.log(`📋 Extracted medications:`, JSON.stringify(extracted.medications, null, 2));
+      
+      // Filter out medications with invalid or empty names
+      const validMedications = (extracted.medications || []).filter((med: any) => {
+        const name = (med.name || '').trim();
+        return name.length > 0 && name !== 'Medication'; // Don't create generic "Medication" entries
+      });
+      
+      console.log(`✅ Valid medications after filtering: ${validMedications.length}`);
+      
       const createdMedications = await Promise.all(
-        (extracted.medications || []).map(async (med: any) => {
-          const startDate = med.startDate ? new Date(med.startDate) : new Date();
-          const endDate = med.endDate ? new Date(med.endDate) : null;
+        validMedications.map(async (med: any) => {
+          try {
+            const startDate = med.startDate ? new Date(med.startDate) : new Date();
+            const endDate = med.endDate ? new Date(med.endDate) : null;
+            
+            // Ensure name is not empty
+            const medicationName = (med.name || '').trim();
+            if (!medicationName || medicationName.length === 0) {
+              console.warn(`⚠️ Skipping medication with empty name:`, med);
+              return null;
+            }
 
-          return prisma.medication.create({
-            data: {
-              userId: userContext.userId,
-              memberId: targetMemberId,
-              name: med.name || 'Medication',
-              dosage: med.dosage || 'N/A',
-              frequency: med.frequency || 'N/A',
-              startDate,
-              endDate,
-              sideEffects: med.sideEffects || [],
-              status: 'active',
-            },
-            include: { member: true }
-          });
+            const medication = await prisma.medication.create({
+              data: {
+                userId: userContext.userId,
+                memberId: targetMemberId,
+                name: medicationName,
+                dosage: (med.dosage || '').trim() || 'N/A',
+                frequency: (med.frequency || '').trim() || 'N/A',
+                startDate,
+                endDate,
+                sideEffects: Array.isArray(med.sideEffects) ? med.sideEffects : [],
+                status: 'active',
+              },
+              include: { member: true }
+            });
+            
+            console.log(`✅ Created medication: ${medication.name}`);
+            return medication;
+          } catch (error: any) {
+            console.error(`❌ Error creating medication ${med.name}:`, error.message);
+            // Don't throw - continue with other medications
+            return null;
+          }
         })
       );
+      
+      // Filter out null values from failed creations
+      const successfulMedications = createdMedications.filter((med: any) => med !== null);
+      console.log(`✅ Successfully created ${successfulMedications.length} medications out of ${validMedications.length} valid medications`);
 
       // 5. Create appointments
       const createdAppointments = await Promise.all(
@@ -1348,9 +1446,84 @@ export const resolvers = {
         })
       );
 
-      // 7. Return created entities and extracted data
+      // 7. Generate AI insights from extracted data
+      let createdInsights: any[] = [];
+      try {
+        const member = targetMemberId ? await prisma.familyMember.findFirst({
+          where: { id: targetMemberId, userId: userContext.userId }
+        }) : null;
+        
+        const insights = generateInsightsFromReport(extracted, member?.name);
+        console.log(`🤖 Generated ${insights.length} insights from report analysis`);
+        
+        createdInsights = await Promise.all(
+          insights.map(insight =>
+            prisma.aIInsight.create({
+              data: {
+                userId: userContext.userId,
+                memberId: targetMemberId,
+                type: insight.type,
+                title: insight.title,
+                description: insight.description,
+                severity: insight.severity,
+                category: insight.category,
+                data: insight.data,
+                actionItems: insight.actionItems,
+              },
+              include: { member: true }
+            })
+          )
+        );
+        
+        console.log(`✅ Created ${createdInsights.length} AI insights`);
+      } catch (insightError: any) {
+        console.error('❌ Error generating insights:', insightError.message);
+        // Don't fail the analysis if insights fail
+      }
+
+      // 8. Generate health predictions based on all health data (including this new report)
+      try {
+        const predictions = await generateHealthPredictions(userContext.userId, targetMemberId || undefined, prisma);
+        console.log(`🔮 Generated ${predictions.length} health predictions`);
+        
+        // Convert predictions to insights and save
+        for (const prediction of predictions) {
+          const predictionInsight = await prisma.aIInsight.create({
+            data: {
+              userId: userContext.userId,
+              memberId: targetMemberId,
+              type: 'prediction',
+              title: `Health Prediction: ${prediction.condition}`,
+              description: `Based on current health data, there is a ${prediction.probability}% probability of ${prediction.condition} within ${prediction.timeframe}. Risk factors: ${prediction.riskFactors.join(', ')}.`,
+              severity: prediction.severity,
+              category: 'health',
+              data: {
+                condition: prediction.condition,
+                probability: prediction.probability,
+                timeframe: prediction.timeframe,
+                riskFactors: prediction.riskFactors,
+                confidence: prediction.confidence,
+                basedOn: prediction.basedOn
+              },
+              actionItems: {
+                immediate: prediction.preventionTips.slice(0, 3),
+                shortTerm: prediction.preventionTips.slice(3, 5),
+                longTerm: prediction.preventionTips.slice(5)
+              }
+            },
+            include: { member: true }
+          });
+          
+          createdInsights.push(predictionInsight);
+        }
+      } catch (predictionError: any) {
+        console.error('❌ Error generating predictions:', predictionError.message);
+        // Don't fail if predictions fail
+      }
+
+      // 8. Return created entities and extracted data
       return {
-        medications: createdMedications,
+        medications: successfulMedications,
         appointments: createdAppointments,
         reminders: createdReminders,
         extracted: {
@@ -1365,58 +1538,193 @@ export const resolvers = {
     generateHealthInsights: async (_: any, { memberId }: { memberId?: string }, { userContext }: { userContext: UserContext }) => {
       if (!userContext) throw new Error('Authentication required');
       
-      // Generate mock AI insights
-      const insights = [
-        {
-          type: 'health_trend',
-          title: 'Blood Pressure Trend',
-          description: 'Your blood pressure readings show improvement over the last month.',
-          severity: 'low',
-          category: 'cardiovascular',
-          data: {
-            trend: 'improving',
-            readings: [140, 135, 130, 125],
-            dates: ['2024-11-01', '2024-11-08', '2024-11-15', '2024-11-22']
-          },
-          actionItems: {
-            continue: ['Taking medication as prescribed'],
-            monitor: ['Blood pressure weekly'],
-            consider: ['Reducing sodium intake']
-          }
+      console.log(`🤖 Generating health insights for memberId: ${memberId || 'all members'}`);
+      
+      // Get all health reports for the user (optionally filtered by member)
+      const reports = await prisma.healthReport.findMany({
+        where: {
+          userId: userContext.userId,
+          memberId: memberId || undefined,
+          status: 'analyzed', // Only analyze reports that have been processed
         },
-        {
-          type: 'recommendation',
-          title: 'Exercise Recommendation',
-          description: 'Consider increasing physical activity for better cardiovascular health.',
-          severity: 'medium',
-          category: 'general',
-          data: {
-            currentActivity: 'low',
-            recommendedActivity: 'moderate',
-            benefits: ['Improved heart health', 'Better sleep', 'Weight management']
-          },
-          actionItems: {
-            start: ['30 minutes of walking daily'],
-            track: ['Daily step count'],
-            goal: ['10,000 steps per day']
-          }
-        }
-      ];
+        include: {
+          member: true
+        },
+        orderBy: {
+          createdAt: 'desc'
+        },
+        take: 10 // Analyze last 10 reports
+      });
 
-      const createdInsights = await Promise.all(
-        insights.map(insight => 
-          prisma.aIInsight.create({
+      console.log(`📊 Found ${reports.length} analyzed reports to generate insights from`);
+
+      const allInsights: any[] = [];
+
+      // Generate insights from each report
+      for (const report of reports) {
+        try {
+          if (!report.analysis || typeof report.analysis !== 'object') {
+            console.warn(`⚠️ Report ${report.id} has no analysis data, skipping`);
+            continue;
+          }
+
+          const analysis = report.analysis as any;
+          const extracted = analysis.extracted;
+
+          if (!extracted) {
+            console.warn(`⚠️ Report ${report.id} has no extracted data, skipping`);
+            continue;
+          }
+
+          const memberName = report.member?.name;
+          const insights = generateInsightsFromReport(extracted, memberName);
+          
+          console.log(`✅ Generated ${insights.length} insights from report ${report.id}`);
+          
+          // Create insights in database
+          const createdInsights = await Promise.all(
+            insights.map(insight =>
+              prisma.aIInsight.create({
+                data: {
+                  userId: userContext.userId,
+                  memberId: report.memberId || memberId || null,
+                  type: insight.type,
+                  title: insight.title,
+                  description: insight.description,
+                  severity: insight.severity,
+                  category: insight.category,
+                  data: insight.data,
+                  actionItems: insight.actionItems,
+                },
+                include: { member: true }
+              })
+            )
+          );
+
+          allInsights.push(...createdInsights);
+        } catch (error: any) {
+          console.error(`❌ Error generating insights from report ${report.id}:`, error.message);
+          // Continue with other reports
+        }
+      }
+
+      // Generate health predictions based on all health data
+      console.log('🔮 Generating health predictions from real data...');
+      try {
+        const predictions = await generateHealthPredictions(userContext.userId, memberId, prisma);
+        console.log(`✅ Generated ${predictions.length} health predictions`);
+
+        // Convert predictions to insights and save to database
+        for (const prediction of predictions) {
+          const member = memberId ? await prisma.familyMember.findFirst({
+            where: { id: memberId, userId: userContext.userId }
+          }) : null;
+
+          const predictionInsight = await prisma.aIInsight.create({
             data: {
-              ...insight,
               userId: userContext.userId,
               memberId: memberId || null,
+              type: 'prediction',
+              title: `Health Prediction: ${prediction.condition}`,
+              description: `Based on current health data, there is a ${prediction.probability}% probability of ${prediction.condition} within ${prediction.timeframe}. Risk factors: ${prediction.riskFactors.join(', ')}.`,
+              severity: prediction.severity,
+              category: 'health',
+              data: {
+                condition: prediction.condition,
+                probability: prediction.probability,
+                timeframe: prediction.timeframe,
+                riskFactors: prediction.riskFactors,
+                confidence: prediction.confidence,
+                basedOn: prediction.basedOn
+              },
+              actionItems: {
+                immediate: prediction.preventionTips.slice(0, 3),
+                shortTerm: prediction.preventionTips.slice(3, 5),
+                longTerm: prediction.preventionTips.slice(5)
+              }
             },
             include: { member: true }
-          })
-        )
-      );
+          });
 
-      return createdInsights;
+          allInsights.push(predictionInsight);
+        }
+      } catch (predictionError: any) {
+        console.error('❌ Error generating predictions:', predictionError.message);
+        // Don't fail if predictions fail
+      }
+
+      // If no reports found, generate some general insights based on current health data
+      if (allInsights.length === 0) {
+        console.log('📝 No reports found, generating general insights from health data');
+        
+        // Get member data
+        const members = await prisma.familyMember.findMany({
+          where: {
+            userId: userContext.userId,
+            id: memberId || undefined
+          },
+          include: {
+            medications: true,
+            appointments: true,
+            healthReports: true
+          }
+        });
+
+        for (const member of members) {
+          // Generate insights based on medications
+          if (member.medications.length > 0) {
+            const medicationNames = member.medications.map(m => m.name.toLowerCase());
+            
+            if (medicationNames.some(name => name.includes('metformin') || name.includes('insulin'))) {
+              allInsights.push(
+                await prisma.aIInsight.create({
+                  data: {
+                    userId: userContext.userId,
+                    memberId: member.id,
+                    type: 'recommendation',
+                    title: 'Diabetes Management',
+                    description: `${member.name} is on diabetes medication. Regular monitoring and follow-ups are important.`,
+                    severity: 'medium',
+                    category: 'medication',
+                    data: { medications: member.medications.map(m => m.name) },
+                    actionItems: {
+                      immediate: ['Monitor blood sugar regularly', 'Follow medication schedule'],
+                      shortTerm: ['Schedule regular checkups'],
+                    }
+                  },
+                  include: { member: true }
+                })
+              );
+            }
+          }
+
+          // Generate insights based on conditions
+          if (member.conditions.length > 0) {
+            allInsights.push(
+              await prisma.aIInsight.create({
+                data: {
+                  userId: userContext.userId,
+                  memberId: member.id,
+                  type: 'risk_assessment',
+                  title: 'Health Conditions Detected',
+                  description: `${member.name} has ${member.conditions.length} health condition(s). Regular monitoring and management are crucial.`,
+                  severity: 'medium',
+                  category: 'health',
+                  data: { conditions: member.conditions },
+                  actionItems: {
+                    immediate: ['Follow treatment plan', 'Monitor symptoms'],
+                    shortTerm: ['Schedule regular checkups'],
+                  }
+                },
+                include: { member: true }
+              })
+            );
+          }
+        }
+      }
+
+      console.log(`✅ Generated total of ${allInsights.length} insights and predictions`);
+      return allInsights;
     },
 
     updateInsightActionItems: async (_: any, { id, actionItems }: { id: string, actionItems: any }, { userContext }: { userContext: UserContext }) => {

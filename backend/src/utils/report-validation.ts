@@ -177,3 +177,4 @@ export function validateMedicalReport(text: string, fileName?: string): Validati
   };
 }
 
+

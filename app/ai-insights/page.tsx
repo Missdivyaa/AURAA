@@ -185,29 +185,53 @@ export default function AIInsights() {
       console.log('🤖 Loaded AI insights from GraphQL:', data)
       
       // Convert backend data to frontend format
-      const formattedInsights: HealthInsight[] = (data.aiInsights || []).map((insight: any) => ({
-        id: insight.id,
-        type: insight.type as 'prediction' | 'recommendation' | 'alert' | 'trend',
-        title: insight.title,
-        description: insight.description,
-        severity: insight.severity as 'low' | 'medium' | 'high',
-        category: insight.category as 'health' | 'medication' | 'appointment' | 'lifestyle',
-        confidence: 85, // Can be calculated from data
-        actionable: !!insight.actionItems,
-        timestamp: insight.createdAt
-      }))
+      const formattedInsights: HealthInsight[] = (data.aiInsights || []).map((insight: any) => {
+        // Calculate confidence from data if available
+        let confidence = 85;
+        if (insight.data?.confidence) {
+          confidence = Math.round(insight.data.confidence * 100);
+        } else if (insight.data?.probability) {
+          confidence = insight.data.probability;
+        }
+
+        return {
+          id: insight.id,
+          type: insight.type as 'prediction' | 'recommendation' | 'alert' | 'trend',
+          title: insight.title,
+          description: insight.description,
+          severity: insight.severity as 'low' | 'medium' | 'high',
+          category: insight.category as 'health' | 'medication' | 'appointment' | 'lifestyle',
+          confidence,
+          actionable: !!insight.actionItems,
+          timestamp: insight.createdAt
+        };
+      });
       
-      // Extract predictions from insights
+      // Extract predictions from insights with full data
       const formattedPredictions: HealthPrediction[] = formattedInsights
         .filter(i => i.type === 'prediction')
-        .map(insight => ({
-          memberId: '', // Can be extracted from insight data
-          memberName: 'Self', // Can be extracted from insight data
-          prediction: insight.description,
-          riskLevel: insight.severity as 'low' | 'medium' | 'high',
-          timeframe: 'Next 30 days', // Can be extracted from insight data
-          recommendations: [] // Can be extracted from actionItems
-        }))
+        .map(insight => {
+          const insightData = (data.aiInsights || []).find((i: any) => i.id === insight.id);
+          const actionItems = insightData?.actionItems || {};
+          const allRecommendations = [
+            ...(actionItems.immediate || []),
+            ...(actionItems.shortTerm || []),
+            ...(actionItems.longTerm || [])
+          ];
+
+          return {
+            memberId: insightData?.memberId || '',
+            memberName: insightData?.member?.name || 'Family Member',
+            prediction: insight.description,
+            riskLevel: insight.severity as 'low' | 'medium' | 'high',
+            timeframe: insightData?.data?.timeframe || '5-10 years',
+            recommendations: allRecommendations,
+            probability: insightData?.data?.probability || 0,
+            condition: insightData?.data?.condition || '',
+            riskFactors: insightData?.data?.riskFactors || [],
+            confidence: insight.confidence
+          };
+        })
       
       setInsights(formattedInsights)
       setPredictions(formattedPredictions)
@@ -556,46 +580,117 @@ export default function AIInsights() {
               transition={{ duration: 0.6, delay: 0.2 }}
               className="space-y-6"
             >
-              <div className="grid gap-6">
-                {predictions.map((prediction, index) => (
-                  <motion.div
-                    key={prediction.memberId}
-                    initial={{ opacity: 0, y: 20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ duration: 0.6, delay: index * 0.1 }}
-                    className="bg-white rounded-2xl p-6 shadow-lg"
+              {predictions.length === 0 ? (
+                <div className="bg-white rounded-xl p-8 text-center shadow-md">
+                  <TrendingUp className="w-16 h-16 text-gray-400 mx-auto mb-4" />
+                  <h3 className="text-xl font-semibold text-gray-900 mb-2">No Predictions Available</h3>
+                  <p className="text-gray-600 mb-4">Generate insights to see health predictions based on your uploaded reports, medications, and health data.</p>
+                  <button
+                    onClick={() => handleGenerateInsights()}
+                    className="inline-flex items-center px-4 py-2 bg-primary-600 text-white rounded-lg font-medium hover:bg-primary-700 transition-colors"
                   >
-                    <div className="flex items-start justify-between mb-4">
-                      <div>
-                        <h3 className="text-xl font-semibold text-gray-900 mb-1">
-                          {prediction.memberName}
-                        </h3>
-                        <p className="text-gray-600">{prediction.prediction}</p>
-                        <p className="text-sm text-gray-500 mt-1">Timeframe: {prediction.timeframe}</p>
-                      </div>
-                      <div className={`px-3 py-1 rounded-full text-sm font-medium ${
-                        prediction.riskLevel === 'high' ? 'bg-red-100 text-red-800' :
-                        prediction.riskLevel === 'medium' ? 'bg-yellow-100 text-yellow-800' :
-                        'bg-green-100 text-green-800'
-                      }`}>
-                        {prediction.riskLevel} risk
-                      </div>
-                    </div>
+                    <Zap className="w-4 h-4 mr-2" />
+                    Generate Predictions
+                  </button>
+                </div>
+              ) : (
+                <div className="grid gap-6">
+                  {predictions.map((prediction, index) => {
+                    const riskBorderColor = prediction.riskLevel === 'high' ? 'border-red-500' :
+                                           prediction.riskLevel === 'medium' ? 'border-yellow-500' : 'border-green-500';
                     
-                    <div className="border-t pt-4">
-                      <h4 className="font-medium text-gray-900 mb-3">Recommendations:</h4>
-                      <ul className="space-y-2">
-                        {prediction.recommendations.map((rec, idx) => (
-                          <li key={idx} className="flex items-start space-x-2">
-                            <CheckCircle className="w-4 h-4 text-green-500 mt-0.5 flex-shrink-0" />
-                            <span className="text-gray-600">{rec}</span>
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  </motion.div>
-                ))}
-              </div>
+                    return (
+                      <motion.div
+                        key={prediction.memberId || `prediction-${index}`}
+                        initial={{ opacity: 0, y: 20 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ duration: 0.6, delay: index * 0.1 }}
+                        className={`bg-white rounded-2xl p-6 shadow-lg border-l-4 ${riskBorderColor}`}
+                      >
+                        <div className="flex items-start justify-between mb-4">
+                          <div className="flex-1">
+                            <div className="flex items-center space-x-2 mb-2 flex-wrap">
+                              <h3 className="text-xl font-semibold text-gray-900">
+                                {prediction.condition || 'Health Prediction'}
+                              </h3>
+                              {prediction.memberName && prediction.memberName !== 'Family Member' && (
+                                <span className="px-2 py-1 bg-gray-100 text-gray-700 text-xs font-medium rounded-full">
+                                  {prediction.memberName}
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-gray-600 mb-3">{prediction.prediction}</p>
+                            
+                            {/* Probability and Timeframe */}
+                            <div className="flex items-center space-x-4 mt-3 flex-wrap gap-2">
+                              {prediction.probability !== undefined && (
+                                <div className="flex items-center space-x-2">
+                                  <span className="text-sm font-medium text-gray-700">Probability:</span>
+                                  <span className={`text-lg font-bold ${
+                                    prediction.probability >= 60 ? 'text-red-600' :
+                                    prediction.probability >= 40 ? 'text-yellow-600' : 'text-green-600'
+                                  }`}>
+                                    {prediction.probability}%
+                                  </span>
+                                </div>
+                              )}
+                              {prediction.timeframe && (
+                                <div className="flex items-center space-x-2">
+                                  <Clock className="w-4 h-4 text-gray-400" />
+                                  <span className="text-sm text-gray-600">{prediction.timeframe}</span>
+                                </div>
+                              )}
+                              {prediction.confidence !== undefined && (
+                                <div className="flex items-center space-x-2">
+                                  <span className="text-sm text-gray-600">Confidence: {prediction.confidence}%</span>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                          <div className={`px-3 py-1 rounded-full text-sm font-medium ml-4 whitespace-nowrap ${
+                            prediction.riskLevel === 'high' ? 'bg-red-100 text-red-800' :
+                            prediction.riskLevel === 'medium' ? 'bg-yellow-100 text-yellow-800' :
+                            'bg-green-100 text-green-800'
+                          }`}>
+                            {prediction.riskLevel.toUpperCase()} RISK
+                          </div>
+                        </div>
+                        
+                        {/* Risk Factors */}
+                        {prediction.riskFactors && prediction.riskFactors.length > 0 && (
+                          <div className="mt-4 pt-4 border-t border-gray-200">
+                            <h4 className="font-semibold text-gray-900 mb-2">Risk Factors:</h4>
+                            <div className="flex flex-wrap gap-2">
+                              {prediction.riskFactors.map((factor, idx) => (
+                                <span key={idx} className="px-2 py-1 bg-orange-100 text-orange-800 text-xs font-medium rounded-full">
+                                  {factor}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                        
+                        {/* Recommendations */}
+                        <div className="border-t pt-4 mt-4">
+                          <h4 className="font-medium text-gray-900 mb-3">Prevention & Recommendations:</h4>
+                          <ul className="space-y-2">
+                            {prediction.recommendations && prediction.recommendations.length > 0 ? (
+                              prediction.recommendations.map((rec, idx) => (
+                                <li key={idx} className="flex items-start space-x-2">
+                                  <CheckCircle className="w-4 h-4 text-green-500 mt-0.5 flex-shrink-0" />
+                                  <span className="text-gray-600">{rec}</span>
+                                </li>
+                              ))
+                            ) : (
+                              <li className="text-gray-500 text-sm">No specific recommendations available</li>
+                            )}
+                          </ul>
+                        </div>
+                      </motion.div>
+                    );
+                  })}
+                </div>
+              )}
             </motion.div>
           )}
 

@@ -1,7 +1,8 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
+import { useAuth } from '@clerk/nextjs'
 import { 
   CheckCircle, 
   AlertTriangle, 
@@ -12,6 +13,7 @@ import {
   Clock,
   TrendingUp
 } from 'lucide-react'
+import { graphqlRequest } from '@/lib/graphql-client'
 
 interface FamilyMember {
   id: string
@@ -31,10 +33,250 @@ interface RecentActivityProps {
   familyMembers?: FamilyMember[]
 }
 
+const GET_RECENT_ACTIVITIES = `
+  query GetRecentActivities {
+    appointments {
+      id
+      doctorName
+      specialty
+      hospital
+      date
+      time
+      status
+      notes
+      createdAt
+      updatedAt
+      member {
+        id
+        name
+      }
+    }
+    medications {
+      id
+      name
+      dosage
+      frequency
+      startDate
+      endDate
+      status
+      createdAt
+      updatedAt
+      member {
+        id
+        name
+      }
+    }
+    healthReports {
+      id
+      fileName
+      status
+      createdAt
+      updatedAt
+      member {
+        id
+        name
+      }
+    }
+    reminders {
+      id
+      title
+      description
+      type
+      date
+      time
+      status
+      createdAt
+      updatedAt
+      member {
+        id
+        name
+      }
+    }
+  }
+`
+
 export default function RecentActivity({ familyMembers = [] }: RecentActivityProps) {
   const [showAll, setShowAll] = useState(false)
+  const [activities, setActivities] = useState<any[]>([])
+  const [loading, setLoading] = useState(true)
+  const { getToken } = useAuth()
   
-  // Generate real activities based on family member data
+  // Fetch real activities from backend
+  useEffect(() => {
+    const fetchActivities = async () => {
+      try {
+        setLoading(true)
+        const token = await getToken()
+        if (!token) {
+          setLoading(false)
+          return
+        }
+
+        const data = await graphqlRequest(GET_RECENT_ACTIVITIES, {}, token)
+        const realActivities = generateRealActivities(data)
+        setActivities(realActivities)
+      } catch (error) {
+        console.error('Error fetching recent activities:', error)
+        // Fallback to generated activities if fetch fails
+        const fallbackActivities = generateActivities()
+        setActivities(fallbackActivities)
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    fetchActivities()
+  }, [familyMembers])
+
+  // Generate activities from real backend data
+  const generateRealActivities = (data: any) => {
+    const activities: any[] = []
+    const now = Date.now()
+
+    // Process appointments (sort by date desc, take most recent 10)
+    if (data.appointments) {
+      const sortedAppointments = [...data.appointments]
+        .sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime())
+        .slice(0, 10)
+      
+      sortedAppointments.forEach((appt: any) => {
+        const apptDate = new Date(appt.date)
+        const daysDiff = Math.floor((apptDate.getTime() - now) / (1000 * 60 * 60 * 24))
+        const memberName = appt.member?.name || 'Family member'
+        
+        if (appt.status === 'completed') {
+          activities.push({
+            id: `appt-completed-${appt.id}`,
+            type: 'appointment',
+            title: 'Appointment completed',
+            description: `${memberName} - ${appt.doctorName} (${appt.specialty})`,
+            time: formatTimeAgo(new Date(appt.updatedAt)),
+            icon: CheckCircle,
+            color: 'text-green-600',
+            bgColor: 'bg-green-50',
+            borderColor: 'border-green-200',
+            timestamp: new Date(appt.updatedAt).getTime()
+          })
+        } else if (appt.status === 'scheduled') {
+          activities.push({
+            id: `appt-upcoming-${appt.id}`,
+            type: 'appointment',
+            title: daysDiff < 0 ? 'Past appointment' : 'Upcoming appointment',
+            description: `${memberName} - ${appt.doctorName} (${appt.specialty})${appt.hospital ? ` at ${appt.hospital}` : ''}`,
+            time: daysDiff === 0 ? 'Today' : daysDiff === 1 ? 'Tomorrow' : daysDiff < 0 ? `${Math.abs(daysDiff)} days ago` : `In ${daysDiff} days`,
+            icon: Calendar,
+            color: daysDiff <= 7 && daysDiff >= 0 ? 'text-red-600' : daysDiff < 0 ? 'text-gray-600' : 'text-blue-600',
+            bgColor: daysDiff <= 7 && daysDiff >= 0 ? 'bg-red-50' : daysDiff < 0 ? 'bg-gray-50' : 'bg-blue-50',
+            borderColor: daysDiff <= 7 && daysDiff >= 0 ? 'border-red-200' : daysDiff < 0 ? 'border-gray-200' : 'border-blue-200',
+            timestamp: apptDate.getTime()
+          })
+        }
+      })
+    }
+
+    // Process medications (sort by createdAt desc, take most recent 10)
+    if (data.medications) {
+      const sortedMedications = [...data.medications]
+        .sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+        .slice(0, 10)
+      
+      sortedMedications.forEach((med: any) => {
+        const memberName = med.member?.name || 'Family member'
+        const startDate = new Date(med.startDate)
+        const daysSinceStart = Math.floor((now - startDate.getTime()) / (1000 * 60 * 60 * 24))
+        
+        if (med.status === 'active') {
+          activities.push({
+            id: `med-active-${med.id}`,
+            type: 'medication',
+            title: 'Medication added',
+            description: `${memberName} - ${med.name} (${med.dosage})`,
+            time: daysSinceStart === 0 ? 'Today' : daysSinceStart === 1 ? 'Yesterday' : `${daysSinceStart} days ago`,
+            icon: Pill,
+            color: 'text-blue-600',
+            bgColor: 'bg-blue-50',
+            borderColor: 'border-blue-200',
+            timestamp: startDate.getTime()
+          })
+        }
+      })
+    }
+
+    // Process health reports (sort by createdAt desc, take most recent 10)
+    if (data.healthReports) {
+      const sortedReports = [...data.healthReports]
+        .sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+        .slice(0, 10)
+      
+      sortedReports.forEach((report: any) => {
+        const memberName = report.member?.name || 'Family member'
+        const reportDate = new Date(report.createdAt)
+        const daysSince = Math.floor((now - reportDate.getTime()) / (1000 * 60 * 60 * 24))
+        
+        activities.push({
+          id: `report-${report.id}`,
+          type: 'report',
+          title: 'Health report uploaded',
+          description: `${memberName} - ${report.fileName}`,
+          time: daysSince === 0 ? 'Today' : daysSince === 1 ? 'Yesterday' : `${daysSince} days ago`,
+          icon: FileText,
+          color: report.status === 'analyzed' ? 'text-green-600' : report.status === 'error' ? 'text-red-600' : 'text-yellow-600',
+          bgColor: report.status === 'analyzed' ? 'bg-green-50' : report.status === 'error' ? 'bg-red-50' : 'bg-yellow-50',
+          borderColor: report.status === 'analyzed' ? 'border-green-200' : report.status === 'error' ? 'border-red-200' : 'border-yellow-200',
+          timestamp: reportDate.getTime()
+        })
+      })
+    }
+
+    // Process reminders (sort by date desc, take most recent 10)
+    if (data.reminders) {
+      const sortedReminders = [...data.reminders]
+        .sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime())
+        .slice(0, 10)
+      
+      sortedReminders.forEach((reminder: any) => {
+        const memberName = reminder.member?.name || 'Family member'
+        const reminderDate = new Date(reminder.date)
+        const daysDiff = Math.floor((reminderDate.getTime() - now) / (1000 * 60 * 60 * 24))
+        
+        if (reminder.status === 'active') {
+          activities.push({
+            id: `reminder-${reminder.id}`,
+            type: 'reminder',
+            title: 'Reminder set',
+            description: `${memberName} - ${reminder.title}`,
+            time: daysDiff === 0 ? 'Today' : daysDiff === 1 ? 'Tomorrow' : daysDiff < 0 ? `${Math.abs(daysDiff)} days ago` : `In ${daysDiff} days`,
+            icon: Clock,
+            color: daysDiff <= 1 && daysDiff >= 0 ? 'text-red-600' : 'text-purple-600',
+            bgColor: daysDiff <= 1 && daysDiff >= 0 ? 'bg-red-50' : 'bg-purple-50',
+            borderColor: daysDiff <= 1 && daysDiff >= 0 ? 'border-red-200' : 'border-purple-200',
+            timestamp: reminderDate.getTime()
+          })
+        }
+      })
+    }
+
+    // Sort by timestamp (most recent first)
+    return activities.sort((a, b) => b.timestamp - a.timestamp)
+  }
+
+  const formatTimeAgo = (date: Date): string => {
+    const now = Date.now()
+    const diffMs = now - date.getTime()
+    const diffMins = Math.floor(diffMs / (1000 * 60))
+    const diffHours = Math.floor(diffMs / (1000 * 60 * 60))
+    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24))
+
+    if (diffMins < 1) return 'Just now'
+    if (diffMins < 60) return `${diffMins} min${diffMins > 1 ? 's' : ''} ago`
+    if (diffHours < 24) return `${diffHours} hour${diffHours > 1 ? 's' : ''} ago`
+    if (diffDays === 1) return 'Yesterday'
+    if (diffDays < 7) return `${diffDays} days ago`
+    if (diffDays < 30) return `${Math.floor(diffDays / 7)} week${Math.floor(diffDays / 7) > 1 ? 's' : ''} ago`
+    return date.toLocaleDateString()
+  }
+  
+  // Generate real activities based on family member data (fallback)
   const generateActivities = () => {
     const activities = []
     
@@ -222,7 +464,8 @@ export default function RecentActivity({ familyMembers = [] }: RecentActivityPro
     })
   }
   
-  const activities = generateActivities()
+  // Use real activities if available, otherwise fallback to generated
+  const displayActivities = activities.length > 0 ? activities : generateActivities()
 
   // Calculate alerts dynamically based on family member data
   const calculateAlerts = () => {
@@ -285,7 +528,7 @@ export default function RecentActivity({ familyMembers = [] }: RecentActivityPro
     }
   }
 
-  const activitiesToShow = showAll ? activities : activities.slice(0, 4)
+  const activitiesToShow = showAll ? displayActivities : displayActivities.slice(0, 4)
 
   return (
     <motion.div
@@ -304,8 +547,20 @@ export default function RecentActivity({ familyMembers = [] }: RecentActivityPro
         </button>
       </div>
       
-      <div className="space-y-4">
-        {activitiesToShow.map((activity, index) => {
+      {loading ? (
+        <div className="text-center py-8">
+          <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600"></div>
+          <p className="text-gray-600 mt-2">Loading activities...</p>
+        </div>
+      ) : (
+        <div className="space-y-4">
+          {activitiesToShow.length === 0 ? (
+            <div className="text-center py-8 text-gray-500">
+              <Clock className="w-12 h-12 mx-auto mb-2 opacity-50" />
+              <p>No recent activity</p>
+            </div>
+          ) : (
+            activitiesToShow.map((activity, index) => {
           const Icon = activity.icon
           return (
             <motion.div
@@ -333,9 +588,11 @@ export default function RecentActivity({ familyMembers = [] }: RecentActivityPro
                 <span>{activity.time}</span>
               </div>
             </motion.div>
-          )
-        })}
-      </div>
+            )
+          })
+          )}
+        </div>
+      )}
       
       {/* Activity Summary */}
       <motion.div
