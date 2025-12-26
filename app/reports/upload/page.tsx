@@ -4,6 +4,7 @@ import { useState, useRef, useEffect } from 'react'
 import { motion } from 'framer-motion'
 import { useUser, useAuth } from '@clerk/nextjs'
 import Navigation from '@/components/Navigation'
+import AddFamilyMemberModal from '@/components/AddFamilyMemberModal'
 import { graphqlRequest } from '@/lib/graphql-client'
 import {
   ArrowLeft,
@@ -75,6 +76,20 @@ const CREATE_HEALTH_REPORT = `
   }
 `
 
+const CREATE_FAMILY_MEMBER = `
+  mutation CreateFamilyMember($input: CreateFamilyMemberInput!) {
+    createFamilyMember(input: $input) {
+      id
+      name
+      relationship
+      dob
+      gender
+      bloodType
+      createdAt
+    }
+  }
+`
+
 export default function UploadReports() {
   const { isSignedIn, user, isLoaded } = useUser()
   const { getToken } = useAuth()
@@ -85,6 +100,21 @@ export default function UploadReports() {
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([])
   const [error, setError] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  
+  // State for patient name modal
+  const [showAddMemberModal, setShowAddMemberModal] = useState(false)
+  const [pendingFileData, setPendingFileData] = useState<{
+    file: File
+    fileInfo: any
+    validation: any
+    index: number
+    extractedPatientName?: string
+    extractedPatientInfo?: {
+      age?: number
+      gender?: string
+      bloodType?: string
+    }
+  } | null>(null)
 
   useEffect(() => {
     const loadMembers = async () => {
@@ -118,6 +148,202 @@ export default function UploadReports() {
       loadMembers()
     }
   }, [isLoaded, isSignedIn, user, getToken])
+
+  // Helper function to extract patient name from text
+  const extractPatientName = (text: string): string => {
+    if (!text) return ''
+    
+    // Try common patterns for patient name
+    const patterns = [
+      /patient\s+name[:\s]+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)/i,
+      /name[:\s]+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)/i,
+      /patient[:\s]+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)/i,
+    ]
+    
+    for (const pattern of patterns) {
+      const match = text.match(pattern)
+      if (match && match[1]) {
+        return match[1].trim()
+      }
+    }
+    
+    return ''
+  }
+
+  // Helper function to extract patient info (age, gender, bloodType)
+  const extractPatientInfo = (text: string) => {
+    const info: { age?: number; gender?: string; bloodType?: string } = {}
+    
+    const ageMatch = text.match(/age[:\s]+(\d+)/i)
+    if (ageMatch) info.age = parseInt(ageMatch[1])
+    
+    const genderMatch = text.match(/gender[:\s]+(male|female|other)/i)
+    if (genderMatch) info.gender = genderMatch[1]
+    
+    const bloodTypeMatch = text.match(/blood\s*type[:\s]+([ABO][+-]?|ab[+-]?)/i)
+    if (bloodTypeMatch) info.bloodType = bloodTypeMatch[1].toUpperCase()
+    
+    return info
+  }
+
+  // Helper function to check if patient name matches any family member
+  const findMatchingMember = (patientName: string): string | null => {
+    if (!patientName) return null
+    
+    const normalizedPatientName = patientName.toLowerCase().trim()
+    
+    for (const member of familyMembers) {
+      const normalizedMemberName = member.name.toLowerCase().trim()
+      // Check for exact match or if patient name contains member name or vice versa
+      if (
+        normalizedPatientName === normalizedMemberName ||
+        normalizedPatientName.includes(normalizedMemberName) ||
+        normalizedMemberName.includes(normalizedPatientName)
+      ) {
+        return member.id
+      }
+    }
+    
+    return null
+  }
+
+  // Function to create family member and continue with report upload
+  const handleAddFamilyMember = async (relationship: string) => {
+    if (!pendingFileData || !user) {
+      throw new Error('Missing file data or user')
+    }
+
+    const token = await getToken()
+    if (!token) {
+      throw new Error('No authentication token available')
+    }
+
+    const { extractedPatientName, extractedPatientInfo, file, fileInfo, validation, index } = pendingFileData
+    
+    if (!extractedPatientName) {
+      throw new Error('Patient name not found in report')
+    }
+
+    // Calculate date of birth from age if available
+    let dob = new Date('1990-01-01') // Default DOB
+    if (extractedPatientInfo?.age) {
+      const currentYear = new Date().getFullYear()
+      dob = new Date(currentYear - extractedPatientInfo.age, 0, 1)
+    }
+
+    // Create family member
+    const memberData = await graphqlRequest(CREATE_FAMILY_MEMBER, {
+      input: {
+        name: extractedPatientName,
+        relationship,
+        dob: dob.toISOString(),
+        gender: extractedPatientInfo?.gender || 'Unknown',
+        bloodType: extractedPatientInfo?.bloodType || undefined,
+      }
+    }, token)
+
+    const newMemberId = memberData.createFamilyMember.id
+    const newMemberName = memberData.createFamilyMember.name
+
+    // Reload family members
+    const data = await graphqlRequest(GET_FAMILY_MEMBERS, {}, token)
+    if (data && data.familyMembers) {
+      const members = data.familyMembers.map((m: any) => ({
+        id: m.id,
+        name: m.name || '',
+        relationship: m.relationship || 'Family Member'
+      }))
+      setFamilyMembers(members)
+      // Update selected member to the newly created one
+      setSelectedMember(newMemberId)
+    }
+
+    // Continue with report upload using the new member ID
+    try {
+      await processFileUpload(file, fileInfo, validation, index, newMemberId, newMemberName)
+      console.log(`✅ Successfully uploaded report for newly added family member: ${newMemberName}`)
+    } catch (error: any) {
+      console.error('Error uploading report after adding family member:', error)
+      // Add to rejected files
+      const rejectedFile: UploadedFile = {
+        id: `file-${Date.now()}-${index}`,
+        name: file.name,
+        size: formatFileSize(file.size),
+        type: file.type,
+        category: 'general',
+        uploadDate: new Date().toISOString().split('T')[0],
+        familyMemberId: newMemberId,
+        familyMemberName: newMemberName,
+        description: '',
+        tags: [],
+        medicalScore: validation.accuracyScore,
+        matchedTerms: validation.matchedTerms || [],
+        uploaded: false,
+        rejectionReason: `Failed to save report: ${error.message || 'Unknown error'}`,
+        url: ''
+      }
+      setUploadedFiles(prev => [...prev, rejectedFile])
+      throw error
+    }
+
+    // Clear pending data
+    setPendingFileData(null)
+  }
+
+  // Function to process file upload (extracted from handleFiles)
+  const processFileUpload = async (
+    file: File,
+    fileInfo: any,
+    validation: any,
+    index: number,
+    memberId: string,
+    memberName: string
+  ) => {
+    const token = await getToken()
+    if (!token) {
+      throw new Error('No authentication token available')
+    }
+
+    try {
+      const reportData = await graphqlRequest(CREATE_HEALTH_REPORT, {
+        input: {
+          memberId,
+          fileName: fileInfo.fileName,
+          fileType: fileInfo.fileType,
+          fileUrl: fileInfo.fileUrl,
+          fileSize: fileInfo.fileSize,
+          extractedText: fileInfo.extractedText,
+          autoExtract: true
+        }
+      }, token)
+
+      const report = reportData.createHealthReport
+
+      const uploadedFile: UploadedFile = {
+        id: report.id,
+        name: file.name,
+        size: formatFileSize(file.size),
+        type: file.type,
+        category: 'medical',
+        uploadDate: new Date().toISOString().split('T')[0],
+        familyMemberId: memberId,
+        familyMemberName: memberName,
+        description: '',
+        tags: [],
+        medicalScore: report.accuracyScore || validation.accuracyScore,
+        matchedTerms: report.matchedTerms || validation.matchedTerms || [],
+        uploaded: true,
+        url: fileInfo.fileUrl
+      }
+
+      setUploadedFiles(prev => [...prev, uploadedFile])
+      console.log('✅ Valid medical report uploaded and processed:', report.id)
+      console.log('📊 Auto-extracted data:', report.analysis)
+    } catch (graphqlError: any) {
+      console.error('Error creating health report:', graphqlError)
+      throw graphqlError
+    }
+  }
 
   const handleFiles = async (files: FileList) => {
     if (!selectedMember) {
@@ -189,43 +415,44 @@ export default function UploadReports() {
             continue // Skip to next file - do NOT save invalid reports
           }
 
-          // Step 2: Only create health report if validation passed
+          // Step 2: Extract patient name from report text
           setIsAnalyzing(true)
+          const extractedText = fileInfo.extractedText || ''
+          const patientName = extractPatientName(extractedText)
+          const patientInfo = extractPatientInfo(extractedText)
           
+          // Step 3: Check if patient name matches any family member
+          let targetMemberId = selectedMember
+          let targetMemberName = familyMembers.find(m => m.id === selectedMember)?.name || ''
+          
+          if (patientName) {
+            const matchingMemberId = findMatchingMember(patientName)
+            
+            if (matchingMemberId) {
+              // Patient found in family members, use that member
+              targetMemberId = matchingMemberId
+              targetMemberName = familyMembers.find(m => m.id === matchingMemberId)?.name || patientName
+              console.log(`✅ Found matching family member: ${targetMemberName}`)
+            } else {
+              // Patient not found - show modal to add them
+              console.log(`⚠️ Patient "${patientName}" not found in family members. Showing add member modal.`)
+              setPendingFileData({
+                file,
+                fileInfo,
+                validation,
+                index,
+                extractedPatientName: patientName,
+                extractedPatientInfo: patientInfo
+              })
+              setShowAddMemberModal(true)
+              // Wait for user to add member - the modal will call handleAddFamilyMember
+              continue // Skip to next file - will be processed after member is added
+            }
+          }
+
+          // Step 4: Create health report with the determined member ID
           try {
-            const reportData = await graphqlRequest(CREATE_HEALTH_REPORT, {
-              input: {
-                memberId: selectedMember,
-                fileName: fileInfo.fileName,
-                fileType: fileInfo.fileType,
-                fileUrl: fileInfo.fileUrl,
-                fileSize: fileInfo.fileSize,
-                extractedText: fileInfo.extractedText,
-                autoExtract: true // Automatically extract medications/appointments/reminders
-              }
-            }, token)
-
-            const report = reportData.createHealthReport
-
-            accepted.push({
-              id: report.id,
-              name: file.name,
-              size: formatFileSize(file.size),
-              type: file.type,
-              category: 'medical',
-              uploadDate: new Date().toISOString().split('T')[0],
-              familyMemberId: selectedMember,
-              familyMemberName: familyMembers.find(m => m.id === selectedMember)?.name || '',
-              description: '',
-              tags: [],
-              medicalScore: report.accuracyScore || validation.accuracyScore,
-              matchedTerms: report.matchedTerms || validation.matchedTerms || [],
-              uploaded: true,
-              url: fileInfo.fileUrl
-            })
-
-            console.log('✅ Valid medical report uploaded and processed:', report.id)
-            console.log('📊 Auto-extracted data:', report.analysis)
+            await processFileUpload(file, fileInfo, validation, index, targetMemberId, targetMemberName)
           } catch (graphqlError: any) {
             console.error('Error creating health report:', graphqlError)
             // If GraphQL fails, the report was already validated but couldn't be saved
@@ -236,8 +463,8 @@ export default function UploadReports() {
               type: file.type,
               category: 'general',
               uploadDate: new Date().toISOString().split('T')[0],
-              familyMemberId: selectedMember,
-              familyMemberName: familyMembers.find(m => m.id === selectedMember)?.name || '',
+              familyMemberId: targetMemberId,
+              familyMemberName: targetMemberName,
               description: '',
               tags: [],
               medicalScore: validation.accuracyScore,
@@ -466,6 +693,55 @@ export default function UploadReports() {
           )}
         </div>
       </div>
+
+      {/* Add Family Member Modal */}
+      {pendingFileData && (
+        <AddFamilyMemberModal
+          isOpen={showAddMemberModal}
+          onClose={async () => {
+            // If user closes without confirming, proceed with the selected member
+            if (pendingFileData && selectedMember) {
+              try {
+                const memberName = familyMembers.find(m => m.id === selectedMember)?.name || 'Selected Member'
+                await processFileUpload(
+                  pendingFileData.file,
+                  pendingFileData.fileInfo,
+                  pendingFileData.validation,
+                  pendingFileData.index,
+                  selectedMember,
+                  memberName
+                )
+                console.log(`✅ Uploaded report using selected member: ${memberName}`)
+              } catch (error: any) {
+                console.error('Error uploading report with selected member:', error)
+                const rejectedFile: UploadedFile = {
+                  id: `file-${Date.now()}-${pendingFileData.index}`,
+                  name: pendingFileData.file.name,
+                  size: formatFileSize(pendingFileData.file.size),
+                  type: pendingFileData.file.type,
+                  category: 'general',
+                  uploadDate: new Date().toISOString().split('T')[0],
+                  familyMemberId: selectedMember,
+                  familyMemberName: familyMembers.find(m => m.id === selectedMember)?.name || '',
+                  description: '',
+                  tags: [],
+                  medicalScore: pendingFileData.validation.accuracyScore,
+                  matchedTerms: pendingFileData.validation.matchedTerms || [],
+                  uploaded: false,
+                  rejectionReason: `Failed to save report: ${error.message || 'Unknown error'}`,
+                  url: ''
+                }
+                setUploadedFiles(prev => [...prev, rejectedFile])
+              }
+            }
+            setShowAddMemberModal(false)
+            setPendingFileData(null)
+          }}
+          patientName={pendingFileData.extractedPatientName || 'Unknown'}
+          patientInfo={pendingFileData.extractedPatientInfo}
+          onConfirm={handleAddFamilyMember}
+        />
+      )}
     </div>
   )
 }

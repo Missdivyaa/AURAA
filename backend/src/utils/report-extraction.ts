@@ -32,6 +32,7 @@ export interface ExtractedReportData {
   appointments: ExtractedAppointment[];
   reminders: ExtractedReminder[];
   conditions?: string[]; // Diseases/conditions found in report
+  patientName?: string; // Patient name extracted from report
   patientInfo?: {
     age?: number;
     gender?: string;
@@ -127,6 +128,7 @@ You are a medical information extractor. Given raw text from a medical report, e
 - appointments: doctorName, specialty, hospital, date, time, notes (if present)
 - reminders: title, type (medication|appointment|checkup|other if you can infer), date, time
 - conditions: array of diseases/conditions mentioned in the report (e.g., ["Type 2 Diabetes", "Hypertension"])
+- patientName: full name of the patient (string) if mentioned in the report
 - patientInfo: age (number), gender (string), bloodType (string) if mentioned
 
 Return strictly valid JSON in this exact shape:
@@ -135,6 +137,7 @@ Return strictly valid JSON in this exact shape:
   "appointments": [ { "doctorName": "", "specialty": "", "hospital": "", "date": "", "time": "", "notes": "" } ],
   "reminders": [ { "title": "", "type": "", "date": "", "time": "" } ],
   "conditions": [ "condition1", "condition2" ],
+  "patientName": "Patient Full Name",
   "patientInfo": { "age": 0, "gender": "", "bloodType": "" }
 }
 
@@ -176,6 +179,7 @@ ${rawText}
       appointments: parsed.appointments || [],
       reminders: parsed.reminders || [],
       conditions: parsed.conditions || [],
+      patientName: parsed.patientName || '',
       patientInfo: parsed.patientInfo || {},
     };
   } catch (err: any) {
@@ -194,6 +198,13 @@ function parseReportFallback(rawText: string): ExtractedReportData {
   const reminders: ExtractedReminder[] = [];
   const conditions: string[] = [];
   const patientInfo: any = {};
+  let patientName = '';
+
+  // Extract patient name - look for "Patient Name:" pattern
+  const patientNameMatch = rawText.match(/patient\s+name[:\s]+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)/i);
+  if (patientNameMatch) {
+    patientName = patientNameMatch[1].trim();
+  }
 
   // Extract conditions/diseases from diagnosis section
   const diagnosisMatch = rawText.match(/diagnosis[:\s]+(.*?)(?:\n\n|prescribed|medication|appointment|follow|lab|future|doctor|$)/is);
@@ -330,6 +341,7 @@ function parseReportFallback(rawText: string): ExtractedReportData {
     appointments,
     reminders,
     conditions: [...new Set(conditions.filter(c => c.length > 2))], // Remove duplicates and short strings
+    patientName,
     patientInfo,
   };
 }

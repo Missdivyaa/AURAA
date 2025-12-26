@@ -117,9 +117,8 @@ export default function RecentActivity({ familyMembers = [] }: RecentActivityPro
         setActivities(realActivities)
       } catch (error) {
         console.error('Error fetching recent activities:', error)
-        // Fallback to generated activities if fetch fails
-        const fallbackActivities = generateActivities()
-        setActivities(fallbackActivities)
+        // Don't show fallback activities - show empty state instead
+        setActivities([])
       } finally {
         setLoading(false)
       }
@@ -132,19 +131,51 @@ export default function RecentActivity({ familyMembers = [] }: RecentActivityPro
   const generateRealActivities = (data: any) => {
     const activities: any[] = []
     const now = Date.now()
+    const nowDate = new Date()
+    nowDate.setHours(0, 0, 0, 0) // Set to start of day for accurate comparison (matches HealthOverview logic)
+    
+    // If no data provided, return empty array (no fallback activities)
+    if (!data) {
+      return []
+    }
 
-    // Process appointments (sort by date desc, take most recent 10)
+    // Process appointments (filter and sort properly)
     if (data.appointments) {
-      const sortedAppointments = [...data.appointments]
-        .sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime())
-        .slice(0, 10)
       
-      sortedAppointments.forEach((appt: any) => {
-        const apptDate = new Date(appt.date)
-        const daysDiff = Math.floor((apptDate.getTime() - now) / (1000 * 60 * 60 * 24))
-        const memberName = appt.member?.name || 'Family member'
-        
-        if (appt.status === 'completed') {
+      // Separate completed, upcoming, and past appointments
+      const completedAppointments: any[] = []
+      const upcomingAppointments: any[] = []
+      const pastAppointments: any[] = []
+      
+      data.appointments.forEach((appt: any) => {
+        try {
+          const apptDate = new Date(appt.date)
+          apptDate.setHours(0, 0, 0, 0)
+          const daysDiff = Math.floor((apptDate.getTime() - nowDate.getTime()) / (1000 * 60 * 60 * 24))
+          const isNotCancelled = appt.status?.toLowerCase() !== 'cancelled'
+          
+          if (appt.status === 'completed') {
+            completedAppointments.push({ appt, daysDiff, apptDate })
+          } else if (appt.status === 'scheduled' && isNotCancelled) {
+            if (daysDiff >= 0) {
+              // Future or today - upcoming
+              upcomingAppointments.push({ appt, daysDiff, apptDate })
+            } else {
+              // Past - don't show in recent activity as "upcoming"
+              pastAppointments.push({ appt, daysDiff, apptDate })
+            }
+          }
+        } catch (error) {
+          console.error('Error processing appointment:', appt, error)
+        }
+      })
+      
+      // Add completed appointments (most recent first, limit to 5)
+      completedAppointments
+        .sort((a, b) => new Date(b.appt.updatedAt).getTime() - new Date(a.appt.updatedAt).getTime())
+        .slice(0, 5)
+        .forEach(({ appt }) => {
+          const memberName = appt.member?.name || 'Family member'
           activities.push({
             id: `appt-completed-${appt.id}`,
             type: 'appointment',
@@ -157,21 +188,27 @@ export default function RecentActivity({ familyMembers = [] }: RecentActivityPro
             borderColor: 'border-green-200',
             timestamp: new Date(appt.updatedAt).getTime()
           })
-        } else if (appt.status === 'scheduled') {
+        })
+      
+      // Add upcoming appointments (soonest first, limit to 10)
+      upcomingAppointments
+        .sort((a, b) => a.apptDate.getTime() - b.apptDate.getTime())
+        .slice(0, 10)
+        .forEach(({ appt, daysDiff, apptDate }) => {
+          const memberName = appt.member?.name || 'Family member'
           activities.push({
             id: `appt-upcoming-${appt.id}`,
             type: 'appointment',
-            title: daysDiff < 0 ? 'Past appointment' : 'Upcoming appointment',
+            title: 'Upcoming appointment',
             description: `${memberName} - ${appt.doctorName} (${appt.specialty})${appt.hospital ? ` at ${appt.hospital}` : ''}`,
-            time: daysDiff === 0 ? 'Today' : daysDiff === 1 ? 'Tomorrow' : daysDiff < 0 ? `${Math.abs(daysDiff)} days ago` : `In ${daysDiff} days`,
+            time: daysDiff === 0 ? 'Today' : daysDiff === 1 ? 'Tomorrow' : `In ${daysDiff} days`,
             icon: Calendar,
-            color: daysDiff <= 7 && daysDiff >= 0 ? 'text-red-600' : daysDiff < 0 ? 'text-gray-600' : 'text-blue-600',
-            bgColor: daysDiff <= 7 && daysDiff >= 0 ? 'bg-red-50' : daysDiff < 0 ? 'bg-gray-50' : 'bg-blue-50',
-            borderColor: daysDiff <= 7 && daysDiff >= 0 ? 'border-red-200' : daysDiff < 0 ? 'border-gray-200' : 'border-blue-200',
+            color: daysDiff <= 7 ? 'text-red-600' : 'text-blue-600',
+            bgColor: daysDiff <= 7 ? 'bg-red-50' : 'bg-blue-50',
+            borderColor: daysDiff <= 7 ? 'border-red-200' : 'border-blue-200',
             timestamp: apptDate.getTime()
           })
-        }
-      })
+        })
     }
 
     // Process medications (sort by createdAt desc, take most recent 10)
@@ -464,8 +501,8 @@ export default function RecentActivity({ familyMembers = [] }: RecentActivityPro
     })
   }
   
-  // Use real activities if available, otherwise fallback to generated
-  const displayActivities = activities.length > 0 ? activities : generateActivities()
+  // Use only real activities from backend - no fallback mock data
+  const displayActivities = activities
 
   // Calculate alerts dynamically based on family member data
   const calculateAlerts = () => {
@@ -608,16 +645,33 @@ export default function RecentActivity({ familyMembers = [] }: RecentActivityPro
           </div>
           <div>
             <div className="text-2xl font-bold text-blue-600">
-              {familyMembers.filter(member => {
-                if (!member.nextAppointment || member.nextAppointment.trim() === '') return false
-                try {
-                  const appointmentDate = new Date(member.nextAppointment)
-                  const daysTo = Math.floor((appointmentDate.getTime() - Date.now()) / (1000 * 60 * 60 * 24))
-                  return daysTo > 0 && daysTo <= 30
-                } catch {
-                  return false
+              {(() => {
+                // Count upcoming appointments from activities (more accurate)
+                const upcomingCount = activities.filter(activity => 
+                  activity.type === 'appointment' && 
+                  activity.title === 'Upcoming appointment'
+                ).length
+                
+                // If we have activities from backend, use that count
+                if (activities.length > 0 && upcomingCount > 0) {
+                  return upcomingCount
                 }
-              }).length}
+                
+                // Otherwise fallback to family members data
+                const now = new Date()
+                now.setHours(0, 0, 0, 0)
+                return familyMembers.filter(member => {
+                  if (!member.nextAppointment || member.nextAppointment.trim() === '') return false
+                  try {
+                    const appointmentDate = new Date(member.nextAppointment)
+                    appointmentDate.setHours(0, 0, 0, 0)
+                    const daysTo = Math.floor((appointmentDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24))
+                    return daysTo >= 0 && daysTo <= 30
+                  } catch {
+                    return false
+                  }
+                }).length
+              })()}
             </div>
             <div className="text-sm text-gray-600">Upcoming (30 days)</div>
           </div>

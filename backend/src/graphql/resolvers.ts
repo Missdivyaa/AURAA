@@ -721,9 +721,13 @@ export const resolvers = {
       const status = 'validated';
       
       // Create the report (only valid reports reach here)
+      // Ensure memberId is explicitly set from input
+      const reportMemberId = input.memberId || null;
+      
       const report = await prisma.healthReport.create({
         data: {
           ...reportData,
+          memberId: reportMemberId, // Explicitly set memberId
           fileName,
           extractedText,
           userId: userContext.userId,
@@ -736,11 +740,35 @@ export const resolvers = {
         include: { member: true }
       });
       
+      console.log(`📄 Created health report ${report.id} for memberId: ${reportMemberId || 'null (no member assigned)'}`);
+      
       // If autoExtract is enabled and report is valid, automatically extract and create entities
       if (autoExtract && validationStatus === 'valid' && extractedText) {
         try {
           const extracted = await extractDataFromReport(report.fileUrl || undefined, extractedText);
-          const targetMemberId = report.memberId || null;
+          // Use the explicitly set memberId from the report
+          const targetMemberId = report.memberId || reportMemberId || null;
+          
+          console.log(`🔍 Extracting data for report ${report.id}, targetMemberId: ${targetMemberId || 'null'}`);
+          
+          // CRITICAL: Only create medications/appointments/reminders if we have a valid memberId
+          if (!targetMemberId) {
+            console.warn(`⚠️ Cannot auto-extract data: No memberId specified for report ${report.id}`);
+            // Update report status but don't create medications without a member
+            await prisma.healthReport.update({
+              where: { id: report.id },
+              data: {
+                status: 'validated',
+                analysis: {
+                  extracted,
+                  autoExtracted: false,
+                  reason: 'No memberId specified - cannot assign medications/appointments',
+                  extractedAt: new Date().toISOString(),
+                }
+              }
+            });
+            return report;
+          }
           
           // Update family member with conditions and patient info if memberId exists
           if (targetMemberId && (extracted.conditions?.length > 0 || extracted.patientInfo)) {
@@ -775,9 +803,25 @@ export const resolvers = {
             }
           }
           
+          // Verify the target member exists and belongs to the user
+          const targetMember = await prisma.familyMember.findFirst({
+            where: {
+              id: targetMemberId,
+              userId: userContext.userId
+            }
+          });
+          
+          if (!targetMember) {
+            console.error(`❌ Target member ${targetMemberId} not found or doesn't belong to user ${userContext.userId}`);
+            throw new Error(`Family member not found or access denied`);
+          }
+          
+          console.log(`✅ Verified target member: ${targetMember.name} (${targetMember.id})`);
+          
           // Create medications
           console.log(`📋 Extracted medications count: ${extracted.medications?.length || 0}`);
           console.log(`📋 Extracted medications:`, JSON.stringify(extracted.medications, null, 2));
+          console.log(`📋 Creating medications for memberId: ${targetMemberId} (${targetMember.name})`);
           
           // Filter out medications with invalid or empty names
           const validMedications = (extracted.medications || []).filter((med: any) => {
@@ -803,7 +847,7 @@ export const resolvers = {
                 const medication = await prisma.medication.create({
                   data: {
                     userId: userContext.userId,
-                    memberId: targetMemberId,
+                    memberId: targetMemberId, // Explicitly use targetMemberId - should never be null here
                     name: medicationName,
                     dosage: (med.dosage || '').trim() || 'N/A',
                     frequency: (med.frequency || '').trim() || 'N/A',
@@ -812,9 +856,10 @@ export const resolvers = {
                     sideEffects: Array.isArray(med.sideEffects) ? med.sideEffects : [],
                     status: 'active',
                   },
+                  include: { member: true }
                 });
                 
-                console.log(`✅ Created medication: ${medication.name}`);
+                console.log(`✅ Created medication "${medication.name}" for member: ${medication.member?.name || 'unknown'} (memberId: ${medication.memberId})`);
                 return medication;
               } catch (error: any) {
                 console.error(`❌ Error creating medication ${med.name}:`, error.message);
@@ -843,7 +888,7 @@ export const resolvers = {
               return prisma.appointment.create({
                 data: {
                   userId: userContext.userId,
-                  memberId: targetMemberId,
+                  memberId: targetMemberId, // Explicitly use targetMemberId
                   doctorName: appt.doctorName || 'Doctor',
                   specialty: appt.specialty || 'General',
                   hospital: appt.hospital || '',
@@ -852,11 +897,12 @@ export const resolvers = {
                   notes: appt.notes || '',
                   status: 'scheduled',
                 },
+                include: { member: true }
               });
             })
           );
           
-          console.log(`✅ Created ${createdAppointments.length} appointments`);
+          console.log(`✅ Created ${createdAppointments.length} appointments for memberId: ${targetMemberId}`);
           
           // Create reminders
           const createdReminders = await Promise.all(
@@ -872,7 +918,7 @@ export const resolvers = {
               return prisma.reminder.create({
                 data: {
                   userId: userContext.userId,
-                  memberId: targetMemberId,
+                  memberId: targetMemberId, // Explicitly use targetMemberId
                   title: rem.title || 'Reminder',
                   description: rem.type ? `Type: ${rem.type}` : '',
                   type: rem.type || 'other',
@@ -882,11 +928,12 @@ export const resolvers = {
                   priority: 'medium',
                   status: 'active',
                 },
+                include: { member: true }
               });
             })
           );
           
-          console.log(`✅ Created ${createdReminders.length} reminders`);
+          console.log(`✅ Created ${createdReminders.length} reminders for memberId: ${targetMemberId}`);
           
           // Generate AI insights from the extracted data
           let createdInsights: any[] = [];
