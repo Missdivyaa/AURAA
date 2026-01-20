@@ -419,6 +419,7 @@ export default function AIInsights() {
   }
 
   const filteredSymptoms = commonSymptoms.filter(symptom =>
+    searchTerm === '' ||
     symptom.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
     symptom.category.toLowerCase().includes(searchTerm.toLowerCase())
   )

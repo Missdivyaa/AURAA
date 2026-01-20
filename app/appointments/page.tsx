@@ -109,6 +109,7 @@ export default function Appointments() {
   const [activeTab, setActiveTab] = useState('upcoming')
   const [showAddModal, setShowAddModal] = useState(false)
   const [selectedDate, setSelectedDate] = useState(new Date())
+  const [searchTerm, setSearchTerm] = useState('')
 
   useEffect(() => {
     if (isLoaded && isSignedIn && user) {
@@ -133,24 +134,39 @@ export default function Appointments() {
       console.log('📅 Loaded appointments from GraphQL:', data)
       
       // Convert backend data to frontend format
-      const formattedAppointments: Appointment[] = (data.appointments || []).map((apt: any) => ({
-        id: apt.id,
-        title: `${apt.specialty} Appointment`,
-        doctor: apt.doctorName,
-        specialty: apt.specialty,
-        date: new Date(apt.date).toISOString().split('T')[0],
-        time: apt.time,
-        duration: 60, // Default duration, can be added to schema
-        location: apt.hospital || 'Not specified',
-        address: apt.hospital || 'Not specified', // Address not in schema yet
-        phone: '', // Phone not in schema yet
-        email: '', // Email not in schema yet
-        status: apt.status as 'scheduled' | 'confirmed' | 'completed' | 'cancelled' | 'rescheduled',
-        notes: apt.notes || '',
-        familyMemberId: apt.memberId || '',
-        familyMemberName: apt.member?.name || 'Self',
-        reminderSent: apt.reminderSent || false
-      }))
+      const formattedAppointments: Appointment[] = (data.appointments || []).map((apt: any) => {
+        // Ensure consistent date formatting (YYYY-MM-DD)
+        let formattedDate = ''
+        try {
+          const dateObj = new Date(apt.date)
+          if (!isNaN(dateObj.getTime())) {
+            formattedDate = dateObj.toISOString().split('T')[0]
+          } else {
+            formattedDate = apt.date // Fallback to original if parsing fails
+          }
+        } catch {
+          formattedDate = apt.date // Fallback to original
+        }
+        
+        return {
+          id: apt.id,
+          title: `${apt.specialty} Appointment`,
+          doctor: apt.doctorName,
+          specialty: apt.specialty,
+          date: formattedDate,
+          time: apt.time || '10:00 AM', // Default time if missing
+          duration: 60, // Default duration, can be added to schema
+          location: apt.hospital || 'Not specified',
+          address: apt.hospital || 'Not specified', // Address not in schema yet
+          phone: '', // Phone not in schema yet
+          email: '', // Email not in schema yet
+          status: apt.status as 'scheduled' | 'confirmed' | 'completed' | 'cancelled' | 'rescheduled',
+          notes: apt.notes || '',
+          familyMemberId: apt.memberId || '',
+          familyMemberName: apt.member?.name || 'Self',
+          reminderSent: apt.reminderSent || false
+        }
+      })
       
       setAppointments(formattedAppointments)
       
@@ -270,13 +286,82 @@ export default function Appointments() {
     }
   }
 
-  const upcomingAppointments = appointments.filter(apt => 
-    apt.status === 'scheduled' || apt.status === 'confirmed'
-  )
+  // Helper function to check if appointment date/time has passed
+  const isAppointmentPast = (appointment: Appointment): boolean => {
+    try {
+      // Combine date and time to create full datetime
+      const dateStr = appointment.date // Format: YYYY-MM-DD
+      const timeStr = appointment.time // Format: HH:MM AM/PM or HH:MM
+      
+      // Parse time string (handle both 12-hour and 24-hour formats)
+      let hours = 0
+      let minutes = 0
+      
+      if (timeStr.includes('AM') || timeStr.includes('PM')) {
+        // 12-hour format: "10:00 AM" or "2:30 PM"
+        const timeMatch = timeStr.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i)
+        if (timeMatch) {
+          hours = parseInt(timeMatch[1])
+          minutes = parseInt(timeMatch[2])
+          const period = timeMatch[3].toUpperCase()
+          
+          if (period === 'PM' && hours !== 12) hours += 12
+          if (period === 'AM' && hours === 12) hours = 0
+        }
+      } else {
+        // 24-hour format: "10:00" or "14:30"
+        const timeMatch = timeStr.match(/(\d{1,2}):(\d{2})/)
+        if (timeMatch) {
+          hours = parseInt(timeMatch[1])
+          minutes = parseInt(timeMatch[2])
+        }
+      }
+      
+      // Create appointment datetime
+      const appointmentDate = new Date(dateStr)
+      appointmentDate.setHours(hours, minutes, 0, 0)
+      
+      // Compare with current time
+      const now = new Date()
+      return appointmentDate.getTime() < now.getTime()
+    } catch (error) {
+      console.error('Error checking appointment date:', error)
+      // If we can't parse, consider it not past (safer default)
+      return false
+    }
+  }
 
-  const pastAppointments = appointments.filter(apt => 
-    apt.status === 'completed' || apt.status === 'cancelled'
-  )
+  // Filter appointments: upcoming = not completed/cancelled AND date/time hasn't passed
+  const upcomingAppointments = appointments.filter(apt => {
+    const isPast = isAppointmentPast(apt)
+    const isActive = apt.status === 'scheduled' || apt.status === 'confirmed' || apt.status === 'rescheduled'
+    const matchesSearch = searchTerm === '' ||
+                         apt.doctor.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                         apt.specialty.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                         apt.familyMemberName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                         apt.location.toLowerCase().includes(searchTerm.toLowerCase())
+    return isActive && !isPast && matchesSearch
+  })
+
+  // Filter appointments: past = completed/cancelled OR date/time has passed
+  const pastAppointments = appointments.filter(apt => {
+    const isPast = isAppointmentPast(apt)
+    const isCompletedOrCancelled = apt.status === 'completed' || apt.status === 'cancelled'
+    const matchesSearch = searchTerm === '' ||
+                         apt.doctor.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                         apt.specialty.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                         apt.familyMemberName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                         apt.location.toLowerCase().includes(searchTerm.toLowerCase())
+    return (isCompletedOrCancelled || isPast) && matchesSearch
+  })
+
+  // Filter doctors based on search
+  const filteredDoctors = doctors.filter(doctor => {
+    return searchTerm === '' ||
+           doctor.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+           doctor.specialty.toLowerCase().includes(searchTerm.toLowerCase()) ||
+           doctor.hospital.toLowerCase().includes(searchTerm.toLowerCase())
+  })
 
   const tabs = [
     { id: 'upcoming', name: 'Upcoming', icon: Calendar, count: upcomingAppointments.length },
@@ -323,11 +408,32 @@ export default function Appointments() {
             </div>
           </motion.div>
 
-          {/* Tabs */}
+          {/* Search Bar */}
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.6, delay: 0.1 }}
+            className="mb-8"
+          >
+            <div className="bg-white rounded-2xl p-6 shadow-lg">
+              <div className="relative">
+                <Search className="absolute left-4 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
+                <input
+                  type="text"
+                  placeholder="Search appointments by doctor, specialty, patient, or location..."
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  className="w-full pl-12 pr-4 py-3 text-lg border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary-500"
+                />
+              </div>
+            </div>
+          </motion.div>
+
+          {/* Tabs */}
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.6, delay: 0.2 }}
             className="mb-8"
           >
             <div className="flex space-x-1 bg-white rounded-xl p-1 shadow-sm">
@@ -407,7 +513,13 @@ export default function Appointments() {
                                 </div>
                                 <div className="flex items-center space-x-2">
                                   <Calendar className="w-4 h-4 text-gray-400" />
-                                  <span className="text-gray-600">{appointment.date} at {appointment.time}</span>
+                                  <span className="text-gray-600">
+                                    {new Date(appointment.date).toLocaleDateString('en-US', { 
+                                      year: 'numeric', 
+                                      month: 'long', 
+                                      day: 'numeric' 
+                                    })} at {appointment.time}
+                                  </span>
                                 </div>
                                 <div className="flex items-center space-x-2">
                                   <Clock className="w-4 h-4 text-gray-400" />
@@ -548,7 +660,13 @@ export default function Appointments() {
                                 </div>
                                 <div className="flex items-center space-x-2">
                                   <Calendar className="w-4 h-4 text-gray-400" />
-                                  <span className="text-gray-600">{appointment.date} at {appointment.time}</span>
+                                  <span className="text-gray-600">
+                                    {new Date(appointment.date).toLocaleDateString('en-US', { 
+                                      year: 'numeric', 
+                                      month: 'long', 
+                                      day: 'numeric' 
+                                    })} at {appointment.time}
+                                  </span>
                                 </div>
                               </div>
                               
@@ -573,8 +691,23 @@ export default function Appointments() {
               ) : (
                 <div className="text-center py-12">
                   <Clock className="w-16 h-16 text-gray-400 mx-auto mb-4" />
-                  <h3 className="text-lg font-semibold text-gray-900 mb-2">No past appointments</h3>
-                  <p className="text-gray-600">Your appointment history will appear here</p>
+                  <h3 className="text-lg font-semibold text-gray-900 mb-2">
+                    {searchTerm ? 'No past appointments found' : 'No past appointments'}
+                  </h3>
+                  <p className="text-gray-600 mb-4">
+                    {searchTerm 
+                      ? `No appointments match "${searchTerm}". Try a different search term.`
+                      : 'Your appointment history will appear here'
+                    }
+                  </p>
+                  {searchTerm && (
+                    <button
+                      onClick={() => setSearchTerm('')}
+                      className="text-primary-600 hover:text-primary-700 font-medium"
+                    >
+                      Clear search
+                    </button>
+                  )}
                 </div>
               )}
             </motion.div>
@@ -588,8 +721,9 @@ export default function Appointments() {
               transition={{ duration: 0.6, delay: 0.2 }}
               className="space-y-6"
             >
-              <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {doctors.map((doctor, index) => (
+              {filteredDoctors.length > 0 ? (
+                <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+                  {filteredDoctors.map((doctor, index) => (
                   <motion.div
                     key={doctor.id}
                     initial={{ opacity: 0, y: 20 }}
@@ -639,8 +773,30 @@ export default function Appointments() {
                       Book Appointment
                     </button>
                   </motion.div>
-                ))}
-              </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-center py-12">
+                  <User className="w-16 h-16 text-gray-400 mx-auto mb-4" />
+                  <h3 className="text-2xl font-semibold text-gray-900 mb-2">
+                    {searchTerm ? 'No doctors found' : 'No doctors yet'}
+                  </h3>
+                  <p className="text-xl text-gray-600 mb-4">
+                    {searchTerm 
+                      ? `No doctors match "${searchTerm}". Try a different search term.`
+                      : 'Doctors will appear here after you schedule appointments'
+                    }
+                  </p>
+                  {searchTerm && (
+                    <button
+                      onClick={() => setSearchTerm('')}
+                      className="text-primary-600 hover:text-primary-700 font-medium"
+                    >
+                      Clear search
+                    </button>
+                  )}
+                </div>
+              )}
             </motion.div>
           )}
         </div>

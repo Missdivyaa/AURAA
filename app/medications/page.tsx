@@ -82,6 +82,27 @@ const GET_MEDICATIONS = `
   }
 `
 
+const GET_REMINDERS = `
+  query GetReminders {
+    reminders {
+      id
+      title
+      description
+      type
+      date
+      time
+      frequency
+      priority
+      status
+      memberId
+      member {
+        id
+        name
+      }
+    }
+  }
+`
+
 const DELETE_MEDICATION = `
   mutation DeleteMedication($id: ID!) {
     deleteMedication(id: $id)
@@ -113,6 +134,7 @@ export default function Medications() {
   useEffect(() => {
     if (isLoaded && isSignedIn && user) {
       loadMedications()
+      loadReminders()
     }
     if (searchParams.get('action') === 'create') {
       // Redirect to add medication page instead of showing modal
@@ -163,13 +185,46 @@ export default function Medications() {
       }))
       
       setMedications(formattedMedications)
-      setReminders([]) // Reminders can be loaded separately
       
     } catch (error) {
       console.error('Error loading medications:', error)
       setMedications([])
     } finally {
       setLoading(false)
+    }
+  }
+
+  const loadReminders = async () => {
+    if (!user) return
+    
+    try {
+      const token = await getToken()
+      if (!token) {
+        throw new Error('No authentication token available')
+      }
+      
+      // Fetch reminders from GraphQL API
+      const data = await graphqlRequest(GET_REMINDERS, {}, token)
+      console.log('🔔 Loaded reminders from GraphQL:', data)
+      
+      // Filter for medication-related reminders and convert to frontend format
+      const medicationReminders: MedicationReminder[] = (data.reminders || [])
+        .filter((rem: any) => rem.type === 'medication' && rem.status === 'active')
+        .map((rem: any) => ({
+          id: rem.id,
+          medicationId: '', // Can be linked by matching medication name
+          medicationName: rem.title.replace('Take ', ''), // Extract medication name from "Take MedicationName"
+          time: rem.time,
+          familyMemberName: rem.member?.name || 'Self',
+          status: rem.status === 'completed' ? 'taken' : rem.status === 'cancelled' ? 'missed' : 'pending',
+          date: rem.date
+        }))
+      
+      setReminders(medicationReminders)
+      
+    } catch (error) {
+      console.error('Error loading reminders:', error)
+      setReminders([])
     }
   }
 
@@ -186,6 +241,9 @@ export default function Medications() {
       
       // Remove from local state
       setMedications(prev => prev.filter(m => m.id !== id))
+      
+      // Reload reminders to update count
+      await loadReminders()
       
       console.log('✅ Medication deleted:', id)
     } catch (error) {
@@ -210,6 +268,9 @@ export default function Medications() {
         m.id === id ? { ...m, status: 'completed' as const } : m
       ))
       
+      // Reload reminders to update count
+      await loadReminders()
+      
       console.log('✅ Medication marked as completed:', id)
     } catch (error) {
       console.error('Error marking medication as taken:', error)
@@ -232,11 +293,30 @@ export default function Medications() {
     return 'text-red-600'
   }
 
+  // Filter medications based on search and status
   const filteredMedications = medications.filter(med => {
-    const matchesSearch = med.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         med.familyMemberName.toLowerCase().includes(searchTerm.toLowerCase())
+    const matchesSearch = searchTerm === '' || 
+                         med.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                         med.familyMemberName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                         med.dosage.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                         med.frequency.toLowerCase().includes(searchTerm.toLowerCase())
     const matchesFilter = filterStatus === 'all' || med.status === filterStatus
     return matchesSearch && matchesFilter
+  })
+
+  // Filter reminders based on search
+  const filteredReminders = reminders.filter(rem => {
+    return searchTerm === '' ||
+           rem.medicationName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+           rem.familyMemberName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+           rem.time.toLowerCase().includes(searchTerm.toLowerCase())
+  })
+
+  // Filter medications for adherence tab based on search
+  const filteredAdherenceMedications = medications.filter(med => {
+    return searchTerm === '' ||
+           med.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+           med.familyMemberName.toLowerCase().includes(searchTerm.toLowerCase())
   })
 
   const tabs = [
@@ -481,11 +561,62 @@ export default function Medications() {
               transition={{ duration: 0.6, delay: 0.2 }}
               className="space-y-6"
             >
-              <div className="text-center py-12">
-                <Bell className="w-16 h-16 text-gray-400 mx-auto mb-4" />
-                <h3 className="text-2xl font-semibold text-gray-900 mb-2">No reminders yet</h3>
-                <p className="text-xl text-gray-600">Reminders will appear here when medications are added</p>
-              </div>
+              {filteredReminders.length > 0 ? (
+                <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                  {filteredReminders.map((reminder, index) => (
+                    <motion.div
+                      key={reminder.id}
+                      initial={{ opacity: 0, y: 20 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ duration: 0.6, delay: index * 0.1 }}
+                      className="bg-white rounded-2xl p-5 shadow-md border-l-4 border-blue-500"
+                    >
+                      <div className="flex items-start justify-between mb-3">
+                        <div className="flex items-start space-x-3">
+                          <div className="w-10 h-10 bg-blue-100 rounded-xl flex items-center justify-center">
+                            <Bell className="w-5 h-5 text-blue-600" />
+                          </div>
+                          <div>
+                            <h3 className="text-lg font-bold text-gray-900">{reminder.medicationName}</h3>
+                            <p className="text-sm text-gray-600">{reminder.familyMemberName}</p>
+                            <p className="text-xs text-gray-500 mt-1">Time: {reminder.time}</p>
+                          </div>
+                        </div>
+                        <span className={`px-2 py-1 text-xs font-medium rounded-full ${
+                          reminder.status === 'taken' 
+                            ? 'bg-green-100 text-green-800'
+                            : reminder.status === 'missed'
+                            ? 'bg-red-100 text-red-800'
+                            : 'bg-blue-100 text-blue-800'
+                        }`}>
+                          {reminder.status}
+                        </span>
+                      </div>
+                    </motion.div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-center py-12">
+                  <Bell className="w-16 h-16 text-gray-400 mx-auto mb-4" />
+                  <h3 className="text-2xl font-semibold text-gray-900 mb-2">
+                    {searchTerm ? 'No reminders found' : 'No medication reminders yet'}
+                  </h3>
+                  <p className="text-xl text-gray-600 mb-4">
+                    {searchTerm 
+                      ? `No reminders match "${searchTerm}". Try a different search term.`
+                      : 'Reminders are automatically created when you add medications'
+                    }
+                  </p>
+                  {searchTerm && (
+                    <button
+                      onClick={() => setSearchTerm('')}
+                      className="text-primary-600 hover:text-primary-700 font-medium"
+                    >
+                      Clear search
+                    </button>
+                  )}
+                </div>
+              )}
             </motion.div>
           )}
 
@@ -497,70 +628,114 @@ export default function Medications() {
               transition={{ duration: 0.6, delay: 0.2 }}
               className="space-y-6"
             >
-              <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {medications.map((medication, index) => (
-                  <motion.div
-                    key={medication.id}
-                    initial={{ opacity: 0, y: 20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ duration: 0.6, delay: index * 0.1 }}
-                    className="bg-white rounded-3xl p-6 shadow-xl"
-                  >
-                    <div className="text-center mb-4">
-                      <h3 className="text-xl font-semibold text-gray-900 mb-2">{medication.name}</h3>
-                      <p className="text-lg text-gray-600">{medication.familyMemberName}</p>
-                    </div>
-                    
-                    <div className="text-center mb-4">
-                      <div className="w-24 h-24 mx-auto mb-3 relative">
-                        <svg className="w-24 h-24 transform -rotate-90">
-                          <circle
-                            cx="48"
-                            cy="48"
-                            r="40"
-                            stroke="currentColor"
-                            strokeWidth="8"
-                            fill="none"
-                            className="text-gray-200"
-                          />
-                          <circle
-                            cx="48"
-                            cy="48"
-                            r="40"
-                            stroke="currentColor"
-                            strokeWidth="8"
-                            fill="none"
-                            strokeDasharray={`${2 * Math.PI * 40}`}
-                            strokeDashoffset={`${2 * Math.PI * 40 * (1 - medication.adherence / 100)}`}
-                            className={getAdherenceColor(medication.adherence)}
-                          />
-                        </svg>
-                        <div className="absolute inset-0 flex items-center justify-center">
-                          <span className={`text-2xl font-bold ${getAdherenceColor(medication.adherence)}`}>
-                            {medication.adherence}%
+              {/* Adherence Explanation */}
+              <div className="bg-blue-50 border border-blue-200 rounded-2xl p-6 mb-6">
+                <div className="flex items-start space-x-3">
+                  <TrendingUp className="w-6 h-6 text-blue-600 flex-shrink-0 mt-1" />
+                  <div>
+                    <h3 className="text-lg font-semibold text-gray-900 mb-2">What is Medication Adherence?</h3>
+                    <p className="text-gray-700 mb-2">
+                      <strong>Adherence</strong> measures how well you follow your medication schedule. It's calculated as the percentage of doses taken correctly and on time.
+                    </p>
+                    <ul className="list-disc list-inside text-gray-700 space-y-1">
+                      <li><strong>90-100%:</strong> Excellent adherence - taking medications as prescribed</li>
+                      <li><strong>70-89%:</strong> Good adherence - minor improvements needed</li>
+                      <li><strong>Below 70%:</strong> Poor adherence - may need support or schedule adjustments</li>
+                    </ul>
+                    <p className="text-sm text-gray-600 mt-3">
+                      💡 <strong>Why it matters:</strong> Good adherence improves treatment effectiveness, prevents complications, and helps you stay healthy. The system tracks when you mark medications as "taken" to calculate your adherence rate.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {filteredAdherenceMedications.length > 0 ? (
+                <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+                  {filteredAdherenceMedications.map((medication, index) => (
+                    <motion.div
+                      key={medication.id}
+                      initial={{ opacity: 0, y: 20 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ duration: 0.6, delay: index * 0.1 }}
+                      className="bg-white rounded-3xl p-6 shadow-xl"
+                    >
+                      <div className="text-center mb-4">
+                        <h3 className="text-xl font-semibold text-gray-900 mb-2">{medication.name}</h3>
+                        <p className="text-lg text-gray-600">{medication.familyMemberName}</p>
+                      </div>
+                      
+                      <div className="text-center mb-4">
+                        <div className="w-24 h-24 mx-auto mb-3 relative">
+                          <svg className="w-24 h-24 transform -rotate-90">
+                            <circle
+                              cx="48"
+                              cy="48"
+                              r="40"
+                              stroke="currentColor"
+                              strokeWidth="8"
+                              fill="none"
+                              className="text-gray-200"
+                            />
+                            <circle
+                              cx="48"
+                              cy="48"
+                              r="40"
+                              stroke="currentColor"
+                              strokeWidth="8"
+                              fill="none"
+                              strokeDasharray={`${2 * Math.PI * 40}`}
+                              strokeDashoffset={`${2 * Math.PI * 40 * (1 - medication.adherence / 100)}`}
+                              className={getAdherenceColor(medication.adherence)}
+                            />
+                          </svg>
+                          <div className="absolute inset-0 flex items-center justify-center">
+                            <span className={`text-2xl font-bold ${getAdherenceColor(medication.adherence)}`}>
+                              {medication.adherence}%
+                            </span>
+                          </div>
+                        </div>
+                        <p className="text-lg text-gray-600">Adherence Rate</p>
+                      </div>
+                      
+                      <div className="space-y-2">
+                        <div className="flex justify-between text-sm">
+                          <span className="text-gray-600">Last Taken</span>
+                          <span className="text-gray-900">
+                            {medication.lastTaken ? new Date(medication.lastTaken).toLocaleDateString() : 'Never'}
+                          </span>
+                        </div>
+                        <div className="flex justify-between text-sm">
+                          <span className="text-gray-600">Next Dose</span>
+                          <span className="text-gray-900">
+                            {medication.nextDose ? new Date(medication.nextDose).toLocaleDateString() : 'Not scheduled'}
                           </span>
                         </div>
                       </div>
-                      <p className="text-lg text-gray-600">Adherence Rate</p>
-                    </div>
-                    
-                    <div className="space-y-2">
-                      <div className="flex justify-between text-sm">
-                        <span className="text-gray-600">Last Taken</span>
-                        <span className="text-gray-900">
-                          {medication.lastTaken ? new Date(medication.lastTaken).toLocaleDateString() : 'Never'}
-                        </span>
-                      </div>
-                      <div className="flex justify-between text-sm">
-                        <span className="text-gray-600">Next Dose</span>
-                        <span className="text-gray-900">
-                          {medication.nextDose ? new Date(medication.nextDose).toLocaleDateString() : 'Not scheduled'}
-                        </span>
-                      </div>
-                    </div>
-                  </motion.div>
-                ))}
-              </div>
+                    </motion.div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-center py-12">
+                  <TrendingUp className="w-16 h-16 text-gray-400 mx-auto mb-4" />
+                  <h3 className="text-2xl font-semibold text-gray-900 mb-2">
+                    {searchTerm ? 'No medications found' : 'No medications yet'}
+                  </h3>
+                  <p className="text-xl text-gray-600 mb-4">
+                    {searchTerm 
+                      ? `No medications match "${searchTerm}". Try a different search term.`
+                      : 'Add medications to track adherence'
+                    }
+                  </p>
+                  {searchTerm && (
+                    <button
+                      onClick={() => setSearchTerm('')}
+                      className="text-primary-600 hover:text-primary-700 font-medium"
+                    >
+                      Clear search
+                    </button>
+                  )}
+                </div>
+              )}
             </motion.div>
           )}
         </div>

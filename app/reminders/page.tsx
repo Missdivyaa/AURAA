@@ -6,6 +6,7 @@ import { motion } from 'framer-motion'
 import { useUser, useAuth } from '@clerk/nextjs'
 import Navigation from '@/components/Navigation'
 import { graphqlRequest } from '@/lib/graphql-client'
+import { notificationService } from '@/lib/notification-service'
 import { 
   Bell, 
   Plus, 
@@ -123,6 +124,15 @@ const MARK_REMINDER_COMPLETED = `
   }
 `
 
+const UPDATE_REMINDER = `
+  mutation UpdateReminder($id: ID!, $input: UpdateReminderInput!) {
+    updateReminder(id: $id, input: $input) {
+      id
+      status
+    }
+  }
+`
+
 export default function Reminders() {
   const searchParams = useSearchParams()
   const { isSignedIn, user, isLoaded } = useUser()
@@ -178,6 +188,8 @@ export default function Reminders() {
   useEffect(() => {
     if (isLoaded && isSignedIn && user) {
       loadReminders()
+      // Initialize notification service
+      notificationService.initialize()
     }
     
     // Check for URL parameter to open add reminder modal
@@ -185,7 +197,92 @@ export default function Reminders() {
     if (actionParam === 'create') {
       setShowAddModal(true)
     }
+
+    // Listen for messages from service worker (notification actions)
+    const handleMessage = async (event: MessageEvent) => {
+      if (event.data?.type === 'REMINDER_COMPLETE') {
+        await handleMarkCompleted(event.data.reminderId)
+      } else if (event.data?.type === 'REMINDER_SNOOZE') {
+        // Handle snooze (you can implement this later)
+        console.log('Snooze reminder:', event.data.reminderId)
+      }
+    }
+
+    if (typeof navigator !== 'undefined' && navigator.serviceWorker) {
+      navigator.serviceWorker.addEventListener('message', handleMessage)
+    }
+    
+    return () => {
+      if (typeof navigator !== 'undefined' && navigator.serviceWorker) {
+        navigator.serviceWorker.removeEventListener('message', handleMessage)
+      }
+    }
   }, [searchParams, isLoaded, isSignedIn, user])
+
+  // Check for missed reminders and schedule alarms
+  useEffect(() => {
+    if (reminders.length === 0) return
+
+    const checkMissedReminders = async () => {
+      const now = new Date()
+      const currentDate = now.toISOString().split('T')[0]
+      const currentTime = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`
+
+      const token = await getToken()
+      if (!token) return
+
+      // Check each reminder
+      for (const reminder of reminders) {
+        // Skip if already completed or missed
+        if (reminder.status === 'completed' || reminder.status === 'missed') continue
+
+        const reminderDate = reminder.date
+        const reminderTime = reminder.time
+
+        // Check if reminder time has passed
+        const isPastDate = reminderDate < currentDate
+        const isTodayAndPastTime = reminderDate === currentDate && reminderTime < currentTime
+
+        if (isPastDate || isTodayAndPastTime) {
+          // Mark as missed in backend
+          try {
+            await graphqlRequest(UPDATE_REMINDER, {
+              id: reminder.id,
+              input: { status: 'missed' }
+            }, token)
+            
+            // Update local state
+            setReminders(prev => prev.map(r => 
+              r.id === reminder.id ? { ...r, status: 'missed' as const } : r
+            ))
+          } catch (error) {
+            console.error('Error marking reminder as missed:', error)
+          }
+        } else {
+          // Schedule alarm for upcoming reminders
+          const reminderDateTime = new Date(`${reminderDate}T${reminderTime}`)
+          if (reminderDateTime.getTime() > now.getTime()) {
+            notificationService.scheduleReminderNotification(
+              reminder.id,
+              reminderDateTime.getTime(),
+              reminder.title,
+              reminder.description,
+              reminder.familyMemberName
+            )
+          }
+        }
+      }
+    }
+
+    checkMissedReminders()
+    
+    // Check every minute for missed reminders
+    const interval = setInterval(() => {
+      checkMissedReminders()
+    }, 60000) // Check every minute
+
+    return () => clearInterval(interval)
+  }, [reminders, getToken])
 
   const loadReminders = async () => {
     if (!user) return
@@ -203,23 +300,67 @@ export default function Reminders() {
       const data = await graphqlRequest(GET_REMINDERS, {}, token)
       console.log('🔔 Loaded reminders from GraphQL:', data)
       
-      // Convert backend data to frontend format
-      const formattedReminders: Reminder[] = (data.reminders || []).map((rem: any) => ({
-        id: rem.id,
-        title: rem.title,
-        type: rem.type as 'medication' | 'appointment' | 'checkup' | 'exercise' | 'measurement' | 'other',
-        description: rem.description || '',
-        time: rem.time,
-        date: new Date(rem.date).toISOString().split('T')[0],
-        frequency: rem.frequency as 'once' | 'daily' | 'weekly' | 'monthly',
-        familyMemberId: rem.memberId || '',
-        familyMemberName: rem.member?.name || 'Self',
-        status: rem.status as 'active' | 'completed' | 'snoozed' | 'missed',
-        priority: rem.priority as 'low' | 'medium' | 'high',
-        notifications: rem.notifications || { push: true, email: false, sms: false },
-        createdAt: rem.createdAt,
-        completedAt: rem.status === 'completed' ? new Date().toISOString() : undefined
-      }))
+      // Convert backend data to frontend format and check for missed reminders
+      const now = new Date()
+      const currentDate = now.toISOString().split('T')[0]
+      const currentTime = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`
+
+      const formattedReminders: Reminder[] = (data.reminders || []).map((rem: any) => {
+        const reminderDate = new Date(rem.date).toISOString().split('T')[0]
+        const reminderTime = rem.time
+        
+        // Determine status: if past time and not completed, mark as missed
+        let status = rem.status as 'active' | 'completed' | 'snoozed' | 'missed'
+        if (status === 'active') {
+          const isPastDate = reminderDate < currentDate
+          const isTodayAndPastTime = reminderDate === currentDate && reminderTime < currentTime
+          if (isPastDate || isTodayAndPastTime) {
+            status = 'missed'
+            // Update in backend asynchronously
+            getToken().then(token => {
+              if (token) {
+                graphqlRequest(UPDATE_REMINDER, {
+                  id: rem.id,
+                  input: { status: 'missed' }
+                }, token).catch(err => console.error('Error updating reminder status:', err))
+              }
+            })
+          }
+        }
+
+        return {
+          id: rem.id,
+          title: rem.title,
+          type: rem.type as 'medication' | 'appointment' | 'checkup' | 'exercise' | 'measurement' | 'other',
+          description: rem.description || '',
+          time: rem.time,
+          date: reminderDate,
+          frequency: rem.frequency as 'once' | 'daily' | 'weekly' | 'monthly',
+          familyMemberId: rem.memberId || '',
+          familyMemberName: rem.member?.name || 'Self',
+          status,
+          priority: rem.priority as 'low' | 'medium' | 'high',
+          notifications: rem.notifications || { push: true, email: false, sms: false },
+          createdAt: rem.createdAt,
+          completedAt: rem.status === 'completed' ? new Date().toISOString() : undefined
+        }
+      })
+      
+      // Schedule alarms for upcoming reminders
+      formattedReminders.forEach(reminder => {
+        if (reminder.status === 'active') {
+          const reminderDateTime = new Date(`${reminder.date}T${reminder.time}`)
+          if (reminderDateTime.getTime() > now.getTime()) {
+            notificationService.scheduleReminderNotification(
+              reminder.id,
+              reminderDateTime.getTime(),
+              reminder.title,
+              reminder.description,
+              reminder.familyMemberName
+            )
+          }
+        }
+      })
       
       // Calculate stats
       const today = new Date().toISOString().split('T')[0]
@@ -429,7 +570,8 @@ export default function Reminders() {
     })()
     
     const matchesType = filterType === 'all' || reminder.type === filterType
-    const matchesSearch = reminder.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    const matchesSearch = searchTerm === '' ||
+                         reminder.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          reminder.familyMemberName.toLowerCase().includes(searchTerm.toLowerCase())
     
     return matchesTab && matchesType && matchesSearch

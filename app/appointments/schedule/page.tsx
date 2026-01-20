@@ -1,8 +1,11 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
+import { useUser, useAuth } from '@clerk/nextjs'
+import { useRouter } from 'next/navigation'
 import Navigation from '@/components/Navigation'
+import { graphqlRequest } from '@/lib/graphql-client'
 import { 
   ArrowLeft,
   Calendar,
@@ -58,7 +61,49 @@ interface FamilyMember {
   relationship: string
 }
 
+const GET_FAMILY_MEMBERS = `
+  query GetFamilyMembers {
+    familyMembers {
+      id
+      name
+      relationship
+    }
+  }
+`
+
+const GET_APPOINTMENTS = `
+  query GetAppointments {
+    appointments {
+      id
+      doctorName
+      specialty
+      hospital
+      date
+      time
+    }
+  }
+`
+
+const CREATE_APPOINTMENT = `
+  mutation CreateAppointment($input: CreateAppointmentInput!) {
+    createAppointment(input: $input) {
+      id
+      doctorName
+      specialty
+      hospital
+      date
+      time
+      notes
+      status
+    }
+  }
+`
+
 export default function ScheduleAppointmentPage() {
+  const { isSignedIn, user, isLoaded } = useUser()
+  const { getToken } = useAuth()
+  const router = useRouter()
+  
   const [selectedMember, setSelectedMember] = useState<string>('')
   const [selectedDoctor, setSelectedDoctor] = useState<string>('')
   const [selectedDate, setSelectedDate] = useState<string>('')
@@ -70,68 +115,102 @@ export default function ScheduleAppointmentPage() {
   const [searchTerm, setSearchTerm] = useState('')
   const [selectedSpecialty, setSelectedSpecialty] = useState<string>('')
   const [showFilters, setShowFilters] = useState(false)
+  const [familyMembers, setFamilyMembers] = useState<FamilyMember[]>([])
+  const [doctors, setDoctors] = useState<Doctor[]>([])
+  const [loading, setLoading] = useState(true)
+  const [doctorName, setDoctorName] = useState('')
+  const [doctorSpecialty, setDoctorSpecialty] = useState('')
+  const [doctorHospital, setDoctorHospital] = useState('')
 
-  // Mock family members
-  const familyMembers: FamilyMember[] = [
-    { id: 'divya-001', name: 'Divya', relationship: 'Self' },
-    { id: 'tushar-002', name: 'Tushar', relationship: 'Brother' },
-    { id: 'mom-003', name: 'Mom', relationship: 'Mother' },
-    { id: 'dad-004', name: 'Dad', relationship: 'Father' }
-  ]
+  // Common specialties
+  const specialties = ['All', 'Cardiology', 'Dermatology', 'Pediatrics', 'Orthopedics', 'Neurology', 'Oncology', 'Psychiatry', 'General Medicine', 'Gynecology', 'Urology', 'ENT', 'Ophthalmology', 'Gastroenterology']
 
-  // Mock doctors
-  const doctors: Doctor[] = [
-    {
-      id: 'doc-1',
-      name: 'Dr. Sarah Johnson',
-      specialty: 'Cardiology',
-      hospital: 'City General Hospital',
-      address: '123 Medical Center Dr, City, State 12345',
-      phone: '(555) 123-4567',
-      email: 'sarah.johnson@citygeneral.com',
-      rating: 4.8,
-      availableSlots: ['09:00', '10:00', '11:00', '14:00', '15:00', '16:00'],
-      avatar: 'https://ui-avatars.com/api/?name=Sarah+Johnson&background=6366f1&color=fff&size=150'
-    },
-    {
-      id: 'doc-2',
-      name: 'Dr. Michael Chen',
-      specialty: 'Dermatology',
-      hospital: 'Skin Care Clinic',
-      address: '456 Health Plaza, City, State 12345',
-      phone: '(555) 234-5678',
-      email: 'michael.chen@skincare.com',
-      rating: 4.6,
-      availableSlots: ['08:00', '09:30', '11:00', '13:00', '14:30', '16:00'],
-      avatar: 'https://ui-avatars.com/api/?name=Michael+Chen&background=10b981&color=fff&size=150'
-    },
-    {
-      id: 'doc-3',
-      name: 'Dr. Emily Rodriguez',
-      specialty: 'Pediatrics',
-      hospital: 'Children\'s Medical Center',
-      address: '789 Kids Lane, City, State 12345',
-      phone: '(555) 345-6789',
-      email: 'emily.rodriguez@childrens.com',
-      rating: 4.9,
-      availableSlots: ['08:30', '10:00', '11:30', '14:00', '15:30', '17:00'],
-      avatar: 'https://ui-avatars.com/api/?name=Emily+Rodriguez&background=f59e0b&color=fff&size=150'
-    },
-    {
-      id: 'doc-4',
-      name: 'Dr. James Wilson',
-      specialty: 'Orthopedics',
-      hospital: 'Sports Medicine Center',
-      address: '321 Athletic Blvd, City, State 12345',
-      phone: '(555) 456-7890',
-      email: 'james.wilson@sportsmed.com',
-      rating: 4.7,
-      availableSlots: ['09:00', '10:30', '12:00', '14:00', '15:30', '17:00'],
-      avatar: 'https://ui-avatars.com/api/?name=James+Wilson&background=ef4444&color=fff&size=150'
+  // Load family members and extract doctors from appointments
+  useEffect(() => {
+    if (isLoaded && isSignedIn) {
+      loadData()
+    } else if (isLoaded && !isSignedIn) {
+      router.push('/login')
     }
-  ]
+  }, [isLoaded, isSignedIn])
 
-  const specialties = ['All', 'Cardiology', 'Dermatology', 'Pediatrics', 'Orthopedics', 'Neurology', 'Oncology', 'Psychiatry']
+  const loadData = async () => {
+    try {
+      const token = await getToken()
+      if (!token) return
+
+      // Load family members
+      const membersData = await graphqlRequest(GET_FAMILY_MEMBERS, {}, token)
+      const members = membersData.familyMembers || []
+      setFamilyMembers(members.map((m: any) => ({
+        id: m.id,
+        name: m.name,
+        relationship: m.relationship
+      })))
+
+      // Load appointments to extract doctors
+      const appointmentsData = await graphqlRequest(GET_APPOINTMENTS, {}, token)
+      const appointments = appointmentsData.appointments || []
+      
+      // Extract unique doctors from appointments
+      const doctorMap = new Map<string, Doctor>()
+      appointments.forEach((apt: any) => {
+        const key = `${apt.doctorName}-${apt.specialty}-${apt.hospital || ''}`
+        if (!doctorMap.has(key) && apt.doctorName) {
+          doctorMap.set(key, {
+            id: key,
+            name: apt.doctorName,
+            specialty: apt.specialty || 'General Medicine',
+            hospital: apt.hospital || 'Hospital',
+            address: '',
+            phone: '',
+            email: '',
+            rating: 4.5,
+            availableSlots: generateTimeSlots(),
+            avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(apt.doctorName)}&background=6366f1&color=fff&size=150`
+          })
+        }
+      })
+
+      // Add common doctors if no appointments exist
+      if (doctorMap.size === 0) {
+        const commonDoctors: Doctor[] = [
+          {
+            id: 'general-1',
+            name: 'Dr. General Practitioner',
+            specialty: 'General Medicine',
+            hospital: 'Local Clinic',
+            address: 'Contact clinic for address',
+            phone: 'Contact clinic',
+            email: '',
+            rating: 4.5,
+            availableSlots: generateTimeSlots(),
+            avatar: 'https://ui-avatars.com/api/?name=General+Practitioner&background=6366f1&color=fff&size=150'
+          }
+        ]
+        setDoctors(commonDoctors)
+      } else {
+        setDoctors(Array.from(doctorMap.values()))
+      }
+
+      setLoading(false)
+    } catch (error) {
+      console.error('Error loading data:', error)
+      setLoading(false)
+    }
+  }
+
+  // Generate time slots (9 AM to 5 PM, 30-minute intervals)
+  const generateTimeSlots = (): string[] => {
+    const slots: string[] = []
+    for (let hour = 9; hour < 17; hour++) {
+      slots.push(`${hour.toString().padStart(2, '0')}:00`)
+      if (hour < 16) {
+        slots.push(`${hour.toString().padStart(2, '0')}:30`)
+      }
+    }
+    return slots
+  }
 
   const appointmentTypes = [
     { value: 'consultation', label: 'Consultation', icon: User },
@@ -148,30 +227,74 @@ export default function ScheduleAppointmentPage() {
     return matchesSearch && matchesSpecialty
   })
 
+  if (loading) {
+    return (
+      <main className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50 pb-8">
+        <Navigation />
+        <div className="pt-20 px-4 sm:px-6 lg:px-8">
+          <div className="max-w-7xl mx-auto">
+            <div className="flex items-center justify-center min-h-[60vh]">
+              <div className="text-center">
+                <div className="w-12 h-12 border-4 border-primary-600 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+                <p className="text-gray-600">Loading...</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </main>
+    )
+  }
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+    
+    if (!isSignedIn) {
+      router.push('/login')
+      return
+    }
+
+    // Validation: Check if doctor is selected or manually entered
+    const hasDoctor = selectedDoctor || (doctorName && doctorSpecialty)
+    if (!selectedMember || !hasDoctor || !selectedDate || !selectedTime) {
+      alert('Please fill in all required fields: Family Member, Doctor, Date, and Time.')
+      return
+    }
+
     setIsSubmitting(true)
 
     try {
-      // Simulate API call
-      await new Promise(resolve => setTimeout(resolve, 1500))
-      
-      const appointment: Appointment = {
-        id: `apt-${Date.now()}`,
-        doctorId: selectedDoctor,
-        doctorName: doctors.find(d => d.id === selectedDoctor)?.name || '',
-        specialty: doctors.find(d => d.id === selectedDoctor)?.specialty || '',
-        date: selectedDate,
-        time: selectedTime,
-        duration: 30,
-        type: appointmentType as any,
-        status: 'scheduled',
-        notes,
-        familyMemberId: selectedMember,
-        familyMemberName: familyMembers.find(m => m.id === selectedMember)?.name || ''
+      const token = await getToken()
+      if (!token) {
+        throw new Error('Authentication required')
       }
+
+      const selectedDoctorData = doctors.find(d => d.id === selectedDoctor)
+      const doctorNameToUse = selectedDoctorData?.name || doctorName
+      const specialtyToUse = selectedDoctorData?.specialty || doctorSpecialty
+      const hospitalToUse = selectedDoctorData?.hospital || doctorHospital || 'Hospital'
+
+      if (!doctorNameToUse || !specialtyToUse) {
+        throw new Error('Please provide doctor name and specialty')
+      }
+
+      // Combine date and time into DateTime
+      const appointmentDateTime = new Date(`${selectedDate}T${selectedTime}`)
       
-      console.log('Appointment scheduled:', appointment)
+      if (isNaN(appointmentDateTime.getTime())) {
+        throw new Error('Invalid date or time selected')
+      }
+
+      const input = {
+        memberId: selectedMember || null,
+        doctorName: doctorNameToUse,
+        specialty: specialtyToUse,
+        hospital: hospitalToUse,
+        date: appointmentDateTime.toISOString(),
+        time: selectedTime,
+        notes: notes || null
+      }
+
+      await graphqlRequest(CREATE_APPOINTMENT, { input }, token)
       
       setShowSuccess(true)
       
@@ -183,27 +306,57 @@ export default function ScheduleAppointmentPage() {
         setSelectedTime('')
         setAppointmentType('consultation')
         setNotes('')
+        setDoctorName('')
+        setDoctorSpecialty('')
+        setDoctorHospital('')
         setShowSuccess(false)
-      }, 3000)
+        router.push('/appointments')
+      }, 2000)
       
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error scheduling appointment:', error)
+      const errorMessage = error.message || error.errors?.[0]?.message || 'Failed to schedule appointment. Please try again.'
+      alert(errorMessage)
     } finally {
       setIsSubmitting(false)
     }
   }
 
+  const handleEmergencyCall = () => {
+    // Open phone dialer with emergency number
+    window.location.href = 'tel:911'
+  }
+
   const getAvailableTimes = () => {
-    if (!selectedDoctor || !selectedDate) return []
-    const doctor = doctors.find(d => d.id === selectedDoctor)
-    return doctor?.availableSlots || []
+    if (!selectedDate) return []
+    
+    // Generate time slots for the selected date
+    const slots = generateTimeSlots()
+    
+    // Filter out past times if date is today
+    const today = new Date().toISOString().split('T')[0]
+    if (selectedDate === today) {
+      const now = new Date()
+      const currentHour = now.getHours()
+      const currentMinute = now.getMinutes()
+      
+      return slots.filter(slot => {
+        const [hour, minute] = slot.split(':').map(Number)
+        const slotTime = hour * 60 + minute
+        const currentTime = currentHour * 60 + currentMinute
+        return slotTime > currentTime
+      })
+    }
+    
+    return slots
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50">
+    <main className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50 pb-8">
       <Navigation />
       
-      <div className="container mx-auto px-4 pt-24 pb-8">
+      <div className="pt-20 px-4 sm:px-6 lg:px-8">
+        <div className="max-w-7xl mx-auto">
         {/* Header */}
         <motion.div
           initial={{ opacity: 0, y: -20 }}
@@ -334,47 +487,99 @@ export default function ScheduleAppointmentPage() {
 
                   {/* Doctor Cards */}
                   <div className="space-y-4">
-                    {filteredDoctors.map((doctor) => (
-                      <button
-                        key={doctor.id}
-                        type="button"
-                        onClick={() => setSelectedDoctor(doctor.id)}
-                        className={`w-full p-4 rounded-lg border-2 transition-all text-left ${
-                          selectedDoctor === doctor.id
-                            ? 'border-primary-500 bg-primary-50'
-                            : 'border-gray-200 hover:border-primary-300 hover:bg-primary-50'
-                        }`}
-                      >
-                        <div className="flex items-start space-x-4">
-                          <img
-                            src={doctor.avatar}
-                            alt={doctor.name}
-                            className="w-12 h-12 rounded-lg object-cover"
-                          />
-                          <div className="flex-1">
-                            <div className="flex items-center justify-between mb-2">
-                              <h4 className="text-xl font-bold text-gray-900">{doctor.name}</h4>
-                              <div className="flex items-center space-x-1">
-                                <span className="text-lg font-semibold text-gray-700">{doctor.rating}</span>
-                                <span className="text-yellow-500">★</span>
+                    {filteredDoctors.length > 0 ? (
+                      filteredDoctors.map((doctor) => (
+                        <button
+                          key={doctor.id}
+                          type="button"
+                          onClick={() => {
+                            setSelectedDoctor(doctor.id)
+                            setDoctorName(doctor.name)
+                            setDoctorSpecialty(doctor.specialty)
+                            setDoctorHospital(doctor.hospital)
+                          }}
+                          className={`w-full p-4 rounded-lg border-2 transition-all text-left ${
+                            selectedDoctor === doctor.id
+                              ? 'border-primary-500 bg-primary-50'
+                              : 'border-gray-200 hover:border-primary-300 hover:bg-primary-50'
+                          }`}
+                        >
+                          <div className="flex items-start space-x-4">
+                            <img
+                              src={doctor.avatar}
+                              alt={doctor.name}
+                              className="w-12 h-12 rounded-lg object-cover"
+                            />
+                            <div className="flex-1">
+                              <div className="flex items-center justify-between mb-2">
+                                <h4 className="text-xl font-bold text-gray-900">{doctor.name}</h4>
+                                <div className="flex items-center space-x-1">
+                                  <span className="text-lg font-semibold text-gray-700">{doctor.rating}</span>
+                                  <span className="text-yellow-500">★</span>
+                                </div>
                               </div>
-                            </div>
-                            <p className="text-lg text-primary-600 font-semibold mb-2">{doctor.specialty}</p>
-                            <p className="text-gray-600 mb-2">{doctor.hospital}</p>
-                            <div className="flex items-center space-x-4 text-sm text-gray-500">
-                              <div className="flex items-center space-x-1">
-                                <MapPin className="w-4 h-4" />
-                                <span>{doctor.address}</span>
-                              </div>
-                              <div className="flex items-center space-x-1">
-                                <Phone className="w-4 h-4" />
-                                <span>{doctor.phone}</span>
-                              </div>
+                              <p className="text-lg text-primary-600 font-semibold mb-2">{doctor.specialty}</p>
+                              <p className="text-gray-600 mb-2">{doctor.hospital}</p>
+                              {doctor.address && (
+                                <div className="flex items-center space-x-4 text-sm text-gray-500">
+                                  {doctor.address && (
+                                    <div className="flex items-center space-x-1">
+                                      <MapPin className="w-4 h-4" />
+                                      <span>{doctor.address}</span>
+                                    </div>
+                                  )}
+                                  {doctor.phone && doctor.phone !== 'Contact clinic' && (
+                                    <div className="flex items-center space-x-1">
+                                      <Phone className="w-4 h-4" />
+                                      <span>{doctor.phone}</span>
+                                    </div>
+                                  )}
+                                </div>
+                              )}
                             </div>
                           </div>
+                        </button>
+                      ))
+                    ) : (
+                      <div className="p-6 bg-gray-50 rounded-xl border-2 border-dashed border-gray-300">
+                        <p className="text-gray-600 text-center mb-4">No doctors found. You can add a new doctor:</p>
+                        <div className="space-y-3">
+                          <input
+                            type="text"
+                            placeholder="Doctor Name"
+                            value={doctorName}
+                            onChange={(e) => {
+                              setDoctorName(e.target.value)
+                              setSelectedDoctor('new-doctor')
+                            }}
+                            className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary-500"
+                          />
+                          <select
+                            value={doctorSpecialty}
+                            onChange={(e) => {
+                              setDoctorSpecialty(e.target.value)
+                              setSelectedDoctor('new-doctor')
+                            }}
+                            className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary-500"
+                          >
+                            <option value="">Select Specialty</option>
+                            {specialties.filter(s => s !== 'All').map(s => (
+                              <option key={s} value={s}>{s}</option>
+                            ))}
+                          </select>
+                          <input
+                            type="text"
+                            placeholder="Hospital/Clinic Name"
+                            value={doctorHospital}
+                            onChange={(e) => {
+                              setDoctorHospital(e.target.value)
+                              setSelectedDoctor('new-doctor')
+                            }}
+                            className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary-500"
+                          />
                         </div>
-                      </button>
-                    ))}
+                      </div>
+                    )}
                   </div>
                 </div>
 
@@ -404,18 +609,27 @@ export default function ScheduleAppointmentPage() {
                       <label className="block text-base font-semibold text-gray-700 mb-3">
                         Time *
                       </label>
-                      <select
-                        required
-                        value={selectedTime}
-                        onChange={(e) => setSelectedTime(e.target.value)}
-                        disabled={!selectedDoctor || !selectedDate}
-                        className="w-full px-4 py-3 text-lg border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary-500 disabled:bg-gray-100"
-                      >
-                        <option value="">Select time</option>
-                        {getAvailableTimes().map((time) => (
-                          <option key={time} value={time}>{time}</option>
-                        ))}
-                      </select>
+                      {!selectedDoctor || !selectedDate ? (
+                        <div className="w-full px-4 py-3 text-lg border border-gray-300 rounded-xl bg-gray-50 text-gray-500">
+                          {!selectedDoctor ? 'Please select a doctor first' : 'Please select a date first'}
+                        </div>
+                      ) : getAvailableTimes().length === 0 ? (
+                        <div className="w-full px-4 py-3 text-lg border border-gray-300 rounded-xl bg-gray-50 text-gray-500">
+                          No available times for this date
+                        </div>
+                      ) : (
+                        <select
+                          required
+                          value={selectedTime}
+                          onChange={(e) => setSelectedTime(e.target.value)}
+                          className="w-full px-4 py-3 text-lg border border-gray-300 rounded-xl bg-white text-gray-900 focus:outline-none focus:ring-2 focus:ring-primary-500"
+                        >
+                          <option value="" className="text-gray-500">Select time</option>
+                          {getAvailableTimes().map((time) => (
+                            <option key={time} value={time} className="text-gray-900">{time}</option>
+                          ))}
+                        </select>
+                      )}
                     </div>
 
                     <div>
@@ -467,8 +681,32 @@ export default function ScheduleAppointmentPage() {
                 <div className="pt-6 border-t">
                   <button
                     type="submit"
-                    disabled={isSubmitting || !selectedMember || !selectedDoctor || !selectedDate || !selectedTime}
-                    className="w-full py-4 px-6 bg-primary-600 text-white rounded-2xl font-semibold text-lg hover:bg-primary-700 transition-colors disabled:opacity-50 flex items-center justify-center space-x-3"
+                    disabled={isSubmitting}
+                    onClick={(e) => {
+                      // Additional validation before submit
+                      const hasDoctor = selectedDoctor || (doctorName && doctorSpecialty)
+                      if (!selectedMember) {
+                        e.preventDefault()
+                        alert('Please select a family member for this appointment.')
+                        return
+                      }
+                      if (!hasDoctor) {
+                        e.preventDefault()
+                        alert('Please select a doctor or enter doctor details.')
+                        return
+                      }
+                      if (!selectedDate) {
+                        e.preventDefault()
+                        alert('Please select an appointment date.')
+                        return
+                      }
+                      if (!selectedTime) {
+                        e.preventDefault()
+                        alert('Please select an appointment time.')
+                        return
+                      }
+                    }}
+                    className="w-full py-4 px-6 bg-primary-600 text-white rounded-2xl font-semibold text-lg hover:bg-primary-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center space-x-3"
                   >
                     {isSubmitting ? (
                       <>
@@ -534,13 +772,17 @@ export default function ScheduleAppointmentPage() {
               <p className="text-red-700 text-lg leading-relaxed mb-4">
                 If this is a medical emergency, call 911 immediately or go to your nearest emergency room.
               </p>
-              <button className="w-full py-3 px-4 bg-red-600 text-white rounded-xl font-semibold hover:bg-red-700 transition-colors">
+              <button 
+                onClick={handleEmergencyCall}
+                className="w-full py-3 px-4 bg-red-600 text-white rounded-xl font-semibold hover:bg-red-700 transition-colors"
+              >
                 Call Emergency Services
               </button>
             </motion.div>
           </div>
         </div>
+        </div>
       </div>
-    </div>
+    </main>
   )
 }

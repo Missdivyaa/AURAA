@@ -3,7 +3,8 @@
 import { useState } from 'react'
 import Link from 'next/link'
 import { motion } from 'framer-motion'
-import { usePathname } from 'next/navigation'
+import { usePathname, useRouter } from 'next/navigation'
+import { useUser, useClerk } from '@clerk/nextjs'
 import { 
   Menu, 
   X, 
@@ -16,12 +17,25 @@ import {
   Settings,
   LogIn,
   UserPlus,
-  Pill
+  LogOut,
+  User
 } from 'lucide-react'
 
 export default function Navigation() {
   const [isOpen, setIsOpen] = useState(false)
   const pathname = usePathname()
+  const router = useRouter()
+  const { isSignedIn, user, isLoaded } = useUser()
+  const { signOut } = useClerk()
+
+  const handleSignOut = async () => {
+    try {
+      await signOut()
+      router.push('/login')
+    } catch (error) {
+      console.error('Error signing out:', error)
+    }
+  }
 
   const navItems = [
     { name: 'Home', href: '/', icon: Heart },
@@ -73,20 +87,52 @@ export default function Navigation() {
 
           {/* Auth Buttons */}
           <div className="hidden md:flex items-center gap-3">
-            <Link
-              href="/login"
-              className="flex items-center gap-2 px-3 py-2 text-gray-700 hover:text-blue-600 transition-colors rounded-lg hover:bg-gray-50"
-            >
-              <LogIn className="w-4 h-4" />
-              <span className="text-sm">Sign In</span>
-            </Link>
-            <Link
-              href="/register"
-              className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-            >
-              <UserPlus className="w-4 h-4" />
-              <span className="text-sm">Get Started</span>
-            </Link>
+            {isLoaded && isSignedIn && user ? (
+              <>
+                {/* User Info */}
+                <div className="flex items-center gap-2 px-3 py-2 text-gray-700">
+                  {user.imageUrl ? (
+                    <img 
+                      src={user.imageUrl} 
+                      alt={user.firstName || 'User'} 
+                      className="w-8 h-8 rounded-full"
+                    />
+                  ) : (
+                    <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center">
+                      <User className="w-5 h-5 text-blue-600" />
+                    </div>
+                  )}
+                  <span className="text-sm font-medium">
+                    {user.firstName || user.emailAddresses[0]?.emailAddress || 'User'}
+                  </span>
+                </div>
+                {/* Logout Button */}
+                <button
+                  onClick={handleSignOut}
+                  className="flex items-center gap-2 px-3 py-2 text-gray-700 hover:text-red-600 transition-colors rounded-lg hover:bg-red-50"
+                >
+                  <LogOut className="w-4 h-4" />
+                  <span className="text-sm">Sign Out</span>
+                </button>
+              </>
+            ) : (
+              <>
+                <Link
+                  href="/login"
+                  className="flex items-center gap-2 px-3 py-2 text-gray-700 hover:text-blue-600 transition-colors rounded-lg hover:bg-gray-50"
+                >
+                  <LogIn className="w-4 h-4" />
+                  <span className="text-sm">Sign In</span>
+                </Link>
+                <Link
+                  href="/login?signup=true"
+                  className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                >
+                  <UserPlus className="w-4 h-4" />
+                  <span className="text-sm">Get Started</span>
+                </Link>
+              </>
+            )}
           </div>
 
           {/* Mobile menu button */}
@@ -132,22 +178,62 @@ export default function Navigation() {
               })}
               
               <div className="pt-2 border-t border-gray-200 space-y-1 mx-2">
-                <Link
-                  href="/login"
-                  className="flex items-center gap-3 px-4 py-3 text-gray-700 hover:text-blue-600 hover:bg-gray-50 rounded-lg transition-colors"
-                  onClick={() => setIsOpen(false)}
-                >
-                  <LogIn className="w-5 h-5" />
-                  <span>Sign In</span>
-                </Link>
-                <Link
-                  href="/register"
-                  className="flex items-center gap-3 px-4 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors justify-center"
-                  onClick={() => setIsOpen(false)}
-                >
-                  <UserPlus className="w-5 h-5" />
-                  <span>Get Started</span>
-                </Link>
+                {isLoaded && isSignedIn && user ? (
+                  <>
+                    {/* User Info Mobile */}
+                    <div className="flex items-center gap-3 px-4 py-3 text-gray-700">
+                      {user.imageUrl ? (
+                        <img 
+                          src={user.imageUrl} 
+                          alt={user.firstName || 'User'} 
+                          className="w-8 h-8 rounded-full"
+                        />
+                      ) : (
+                        <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center">
+                          <User className="w-5 h-5 text-blue-600" />
+                        </div>
+                      )}
+                      <div className="flex-1">
+                        <p className="font-medium text-sm">
+                          {user.firstName || user.emailAddresses[0]?.emailAddress || 'User'}
+                        </p>
+                        {user.emailAddresses[0]?.emailAddress && user.firstName && (
+                          <p className="text-xs text-gray-500">{user.emailAddresses[0].emailAddress}</p>
+                        )}
+                      </div>
+                    </div>
+                    {/* Logout Button Mobile */}
+                    <button
+                      onClick={() => {
+                        setIsOpen(false)
+                        handleSignOut()
+                      }}
+                      className="flex items-center gap-3 px-4 py-3 text-red-600 hover:text-red-700 hover:bg-red-50 rounded-lg transition-colors w-full"
+                    >
+                      <LogOut className="w-5 h-5" />
+                      <span>Sign Out</span>
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <Link
+                      href="/login"
+                      className="flex items-center gap-3 px-4 py-3 text-gray-700 hover:text-blue-600 hover:bg-gray-50 rounded-lg transition-colors"
+                      onClick={() => setIsOpen(false)}
+                    >
+                      <LogIn className="w-5 h-5" />
+                      <span>Sign In</span>
+                    </Link>
+                    <Link
+                      href="/login?signup=true"
+                      className="flex items-center gap-3 px-4 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors justify-center"
+                      onClick={() => setIsOpen(false)}
+                    >
+                      <UserPlus className="w-5 h-5" />
+                      <span>Get Started</span>
+                    </Link>
+                  </>
+                )}
               </div>
             </div>
           </motion.div>

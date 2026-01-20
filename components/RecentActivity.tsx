@@ -11,9 +11,11 @@ import {
   FileText, 
   Heart,
   Clock,
-  TrendingUp
+  TrendingUp,
+  X
 } from 'lucide-react'
 import { graphqlRequest } from '@/lib/graphql-client'
+import { notificationService } from '@/lib/notification-service'
 
 interface FamilyMember {
   id: string
@@ -84,6 +86,7 @@ const GET_RECENT_ACTIVITIES = `
       type
       date
       time
+      frequency
       status
       createdAt
       updatedAt
@@ -95,12 +98,74 @@ const GET_RECENT_ACTIVITIES = `
   }
 `
 
+const MARK_APPOINTMENT_COMPLETED = `
+  mutation MarkAppointmentCompleted($id: ID!, $notes: String) {
+    markAppointmentCompleted(id: $id, notes: $notes) {
+      id
+      status
+    }
+  }
+`
+
+const CANCEL_APPOINTMENT = `
+  mutation CancelAppointment($id: ID!, $reason: String) {
+    cancelAppointment(id: $id, reason: $reason) {
+      id
+      status
+    }
+  }
+`
+
 export default function RecentActivity({ familyMembers = [] }: RecentActivityProps) {
   const [showAll, setShowAll] = useState(false)
   const [activities, setActivities] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const { getToken } = useAuth()
   
+  // Notification state for appointments
+  const [notifiedAppointments, setNotifiedAppointments] = useState<Set<string>>(new Set())
+  
+  // Check for appointment notifications (1 hour before) using notification service
+  useEffect(() => {
+    const checkAppointmentNotifications = async () => {
+      const now = Date.now()
+      
+      activities.forEach(async (activity) => {
+        if (activity.type === 'appointment' && activity.title === 'Upcoming appointment' && activity.timestamp) {
+          const timeUntil = activity.timestamp - now
+          const hoursUntil = timeUntil / (1000 * 60 * 60)
+          
+          // If appointment is within 1 hour and hasn't been notified yet
+          if (hoursUntil > 0 && hoursUntil <= 1 && !notifiedAppointments.has(activity.id)) {
+            // Extract appointment details from description
+            const match = activity.description.match(/(.+?) - (.+?) \((.+?)\)/)
+            const memberName = match ? match[1] : 'Family member'
+            const doctorName = match ? match[2] : 'Doctor'
+            const specialty = match ? match[3] : ''
+            
+            // Use notification service for background notifications
+            await notificationService.scheduleAppointmentReminder(
+              activity.appointmentId || activity.id,
+              activity.timestamp,
+              doctorName,
+              specialty,
+              memberName
+            )
+            
+            // Mark as notified
+            setNotifiedAppointments(prev => new Set(prev).add(activity.id))
+          }
+        }
+      })
+    }
+    
+    // Check every minute
+    const interval = setInterval(checkAppointmentNotifications, 60000)
+    checkAppointmentNotifications() // Check immediately
+    
+    return () => clearInterval(interval)
+  }, [activities, notifiedAppointments])
+
   // Fetch real activities from backend
   useEffect(() => {
     const fetchActivities = async () => {
@@ -125,7 +190,60 @@ export default function RecentActivity({ familyMembers = [] }: RecentActivityPro
     }
 
     fetchActivities()
-  }, [familyMembers])
+    
+    // Refresh activities every 5 minutes to catch missed appointments
+    const interval = setInterval(fetchActivities, 5 * 60 * 1000)
+    
+    return () => clearInterval(interval)
+  }, [familyMembers, getToken])
+  
+  // Handle marking appointment as completed
+  const handleMarkCompleted = async (appointmentId: string) => {
+    try {
+      const token = await getToken()
+      if (!token) {
+        alert('Please sign in to update appointments')
+        return
+      }
+      
+      const notes = prompt('Add any notes about the appointment (optional):') || ''
+      await graphqlRequest(MARK_APPOINTMENT_COMPLETED, { id: appointmentId, notes }, token)
+      
+      // Refresh activities
+      const data = await graphqlRequest(GET_RECENT_ACTIVITIES, {}, token)
+      const realActivities = generateRealActivities(data)
+      setActivities(realActivities)
+      
+      alert('Appointment marked as completed!')
+    } catch (error) {
+      console.error('Error marking appointment as completed:', error)
+      alert('Failed to update appointment. Please try again.')
+    }
+  }
+  
+  // Handle marking appointment as missed/cancelled
+  const handleMarkMissed = async (appointmentId: string) => {
+    try {
+      const token = await getToken()
+      if (!token) {
+        alert('Please sign in to update appointments')
+        return
+      }
+      
+      const reason = prompt('Please provide a reason (missed, cancelled, etc.):') || 'Missed'
+      await graphqlRequest(CANCEL_APPOINTMENT, { id: appointmentId, reason }, token)
+      
+      // Refresh activities
+      const data = await graphqlRequest(GET_RECENT_ACTIVITIES, {}, token)
+      const realActivities = generateRealActivities(data)
+      setActivities(realActivities)
+      
+      alert('Appointment marked as missed/cancelled!')
+    } catch (error) {
+      console.error('Error marking appointment as missed:', error)
+      alert('Failed to update appointment. Please try again.')
+    }
+  }
 
   // Generate activities from real backend data
   const generateRealActivities = (data: any) => {
@@ -142,28 +260,65 @@ export default function RecentActivity({ familyMembers = [] }: RecentActivityPro
     // Process appointments (filter and sort properly)
     if (data.appointments) {
       
-      // Separate completed, upcoming, and past appointments
+      // Helper function to check if appointment date/time has passed
+      const isAppointmentPast = (appt: any): boolean => {
+        try {
+          const dateStr = appt.date
+          const timeStr = appt.time || '10:00 AM'
+          
+          // Parse time string (handle both 12-hour and 24-hour formats)
+          let hours = 0
+          let minutes = 0
+          
+          if (timeStr.includes('AM') || timeStr.includes('PM')) {
+            const timeMatch = timeStr.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i)
+            if (timeMatch) {
+              hours = parseInt(timeMatch[1])
+              minutes = parseInt(timeMatch[2])
+              const period = timeMatch[3].toUpperCase()
+              
+              if (period === 'PM' && hours !== 12) hours += 12
+              if (period === 'AM' && hours === 12) hours = 0
+            }
+          } else {
+            const timeMatch = timeStr.match(/(\d{1,2}):(\d{2})/)
+            if (timeMatch) {
+              hours = parseInt(timeMatch[1])
+              minutes = parseInt(timeMatch[2])
+            }
+          }
+          
+          // Create appointment datetime
+          const appointmentDate = new Date(dateStr)
+          appointmentDate.setHours(hours, minutes, 0, 0)
+          
+          // Compare with current time
+          return appointmentDate.getTime() < now
+        } catch (error) {
+          console.error('Error checking appointment date:', error)
+          return false
+        }
+      }
+      
+      // Separate completed, upcoming, past (missed), and needs confirmation
       const completedAppointments: any[] = []
       const upcomingAppointments: any[] = []
-      const pastAppointments: any[] = []
+      const missedAppointments: any[] = []
       
       data.appointments.forEach((appt: any) => {
         try {
-          const apptDate = new Date(appt.date)
-          apptDate.setHours(0, 0, 0, 0)
-          const daysDiff = Math.floor((apptDate.getTime() - nowDate.getTime()) / (1000 * 60 * 60 * 24))
+          const isPast = isAppointmentPast(appt)
           const isNotCancelled = appt.status?.toLowerCase() !== 'cancelled'
+          const isCompleted = appt.status?.toLowerCase() === 'completed'
           
-          if (appt.status === 'completed') {
-            completedAppointments.push({ appt, daysDiff, apptDate })
-          } else if (appt.status === 'scheduled' && isNotCancelled) {
-            if (daysDiff >= 0) {
-              // Future or today - upcoming
-              upcomingAppointments.push({ appt, daysDiff, apptDate })
-            } else {
-              // Past - don't show in recent activity as "upcoming"
-              pastAppointments.push({ appt, daysDiff, apptDate })
-            }
+          if (isCompleted) {
+            completedAppointments.push({ appt })
+          } else if (isNotCancelled && !isPast) {
+            // Future appointment - upcoming
+            upcomingAppointments.push({ appt })
+          } else if (isNotCancelled && isPast && !isCompleted) {
+            // Past appointment that hasn't been marked as completed - missed
+            missedAppointments.push({ appt })
           }
         } catch (error) {
           console.error('Error processing appointment:', appt, error)
@@ -190,39 +345,183 @@ export default function RecentActivity({ familyMembers = [] }: RecentActivityPro
           })
         })
       
+      // Add missed appointments (most recent first, limit to 10)
+      missedAppointments
+        .sort((a, b) => {
+          const aDate = new Date(a.appt.date)
+          const bDate = new Date(b.appt.date)
+          return bDate.getTime() - aDate.getTime()
+        })
+        .slice(0, 10)
+        .forEach(({ appt }) => {
+          const memberName = appt.member?.name || 'Family member'
+          const apptDate = new Date(appt.date)
+          const timeStr = appt.time || '10:00 AM'
+          
+          // Parse time
+          let hours = 0
+          let minutes = 0
+          if (timeStr.includes('AM') || timeStr.includes('PM')) {
+            const timeMatch = timeStr.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i)
+            if (timeMatch) {
+              hours = parseInt(timeMatch[1])
+              minutes = parseInt(timeMatch[2])
+              const period = timeMatch[3].toUpperCase()
+              if (period === 'PM' && hours !== 12) hours += 12
+              if (period === 'AM' && hours === 12) hours = 0
+            }
+          } else {
+            const timeMatch = timeStr.match(/(\d{1,2}):(\d{2})/)
+            if (timeMatch) {
+              hours = parseInt(timeMatch[1])
+              minutes = parseInt(timeMatch[2])
+            }
+          }
+          
+          apptDate.setHours(hours, minutes, 0, 0)
+          
+          activities.push({
+            id: `appt-missed-${appt.id}`,
+            type: 'appointment',
+            title: 'Appointment missed',
+            description: `${memberName} - ${appt.doctorName} (${appt.specialty})${appt.hospital ? ` at ${appt.hospital}` : ''} at ${timeStr}`,
+            time: formatTimeAgo(apptDate),
+            icon: AlertTriangle,
+            color: 'text-red-600',
+            bgColor: 'bg-red-50',
+            borderColor: 'border-red-200',
+            timestamp: apptDate.getTime(),
+            appointmentId: appt.id // Store ID for action buttons
+          })
+        })
+      
       // Add upcoming appointments (soonest first, limit to 10)
       upcomingAppointments
-        .sort((a, b) => a.apptDate.getTime() - b.apptDate.getTime())
+        .sort((a, b) => {
+          const aDate = new Date(a.appt.date)
+          const bDate = new Date(b.appt.date)
+          const aTime = a.appt.time || '10:00 AM'
+          const bTime = b.appt.time || '10:00 AM'
+          
+          // Parse times
+          const parseTime = (timeStr: string) => {
+            let hours = 0
+            let minutes = 0
+            if (timeStr.includes('AM') || timeStr.includes('PM')) {
+              const timeMatch = timeStr.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i)
+              if (timeMatch) {
+                hours = parseInt(timeMatch[1])
+                minutes = parseInt(timeMatch[2])
+                const period = timeMatch[3].toUpperCase()
+                if (period === 'PM' && hours !== 12) hours += 12
+                if (period === 'AM' && hours === 12) hours = 0
+              }
+            } else {
+              const timeMatch = timeStr.match(/(\d{1,2}):(\d{2})/)
+              if (timeMatch) {
+                hours = parseInt(timeMatch[1])
+                minutes = parseInt(timeMatch[2])
+              }
+            }
+            return { hours, minutes }
+          }
+          
+          const aTimeParsed = parseTime(aTime)
+          const bTimeParsed = parseTime(bTime)
+          aDate.setHours(aTimeParsed.hours, aTimeParsed.minutes, 0, 0)
+          bDate.setHours(bTimeParsed.hours, bTimeParsed.minutes, 0, 0)
+          
+          return aDate.getTime() - bDate.getTime()
+        })
         .slice(0, 10)
-        .forEach(({ appt, daysDiff, apptDate }) => {
+        .forEach(({ appt }) => {
           const memberName = appt.member?.name || 'Family member'
+          const apptDate = new Date(appt.date)
+          const timeStr = appt.time || '10:00 AM'
+          
+          // Parse time
+          let hours = 0
+          let minutes = 0
+          if (timeStr.includes('AM') || timeStr.includes('PM')) {
+            const timeMatch = timeStr.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i)
+            if (timeMatch) {
+              hours = parseInt(timeMatch[1])
+              minutes = parseInt(timeMatch[2])
+              const period = timeMatch[3].toUpperCase()
+              if (period === 'PM' && hours !== 12) hours += 12
+              if (period === 'AM' && hours === 12) hours = 0
+            }
+          } else {
+            const timeMatch = timeStr.match(/(\d{1,2}):(\d{2})/)
+            if (timeMatch) {
+              hours = parseInt(timeMatch[1])
+              minutes = parseInt(timeMatch[2])
+            }
+          }
+          
+          apptDate.setHours(hours, minutes, 0, 0)
+          const hoursUntil = Math.floor((apptDate.getTime() - now) / (1000 * 60 * 60))
+          const daysUntil = Math.floor((apptDate.getTime() - now) / (1000 * 60 * 60 * 24))
+          
+          // Check if appointment is within 1 hour (for notification)
+          const isWithinOneHour = hoursUntil >= 0 && hoursUntil <= 1
+          
+          let timeText = ''
+          if (daysUntil === 0) {
+            if (hoursUntil <= 0) {
+              timeText = 'Now'
+            } else if (hoursUntil === 1) {
+              timeText = 'In 1 hour'
+            } else {
+              timeText = `Today at ${timeStr}`
+            }
+          } else if (daysUntil === 1) {
+            timeText = 'Tomorrow'
+          } else {
+            timeText = `In ${daysUntil} days`
+          }
+          
           activities.push({
             id: `appt-upcoming-${appt.id}`,
             type: 'appointment',
-            title: 'Upcoming appointment',
-            description: `${memberName} - ${appt.doctorName} (${appt.specialty})${appt.hospital ? ` at ${appt.hospital}` : ''}`,
-            time: daysDiff === 0 ? 'Today' : daysDiff === 1 ? 'Tomorrow' : `In ${daysDiff} days`,
+            title: isWithinOneHour ? 'Appointment soon' : 'Upcoming appointment',
+            description: `${memberName} - ${appt.doctorName} (${appt.specialty})${appt.hospital ? ` at ${appt.hospital}` : ''} at ${timeStr}`,
+            time: timeText,
             icon: Calendar,
-            color: daysDiff <= 7 ? 'text-red-600' : 'text-blue-600',
-            bgColor: daysDiff <= 7 ? 'bg-red-50' : 'bg-blue-50',
-            borderColor: daysDiff <= 7 ? 'border-red-200' : 'border-blue-200',
-            timestamp: apptDate.getTime()
+            color: isWithinOneHour ? 'text-red-600' : daysUntil <= 7 ? 'text-orange-600' : 'text-blue-600',
+            bgColor: isWithinOneHour ? 'bg-red-50' : daysUntil <= 7 ? 'bg-orange-50' : 'bg-blue-50',
+            borderColor: isWithinOneHour ? 'border-red-200' : daysUntil <= 7 ? 'border-orange-200' : 'border-blue-200',
+            timestamp: apptDate.getTime(),
+            appointmentId: appt.id // Store ID for action buttons
           })
         })
     }
 
-    // Process medications (sort by createdAt desc, take most recent 10)
+    // Process medications
     if (data.medications) {
-      const sortedMedications = [...data.medications]
-        .sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-        .slice(0, 10)
-      
-      sortedMedications.forEach((med: any) => {
+      data.medications.forEach((med: any) => {
         const memberName = med.member?.name || 'Family member'
         const startDate = new Date(med.startDate)
+        const updatedDate = new Date(med.updatedAt)
         const daysSinceStart = Math.floor((now - startDate.getTime()) / (1000 * 60 * 60 * 24))
+        const daysSinceUpdate = Math.floor((now - updatedDate.getTime()) / (1000 * 60 * 60 * 24))
         
-        if (med.status === 'active') {
+        if (med.status === 'completed') {
+          // Medication marked as taken/completed
+          activities.push({
+            id: `med-taken-${med.id}`,
+            type: 'medication',
+            title: 'Medication taken',
+            description: `${memberName} - ${med.name} (${med.dosage})`,
+            time: formatTimeAgo(updatedDate),
+            icon: CheckCircle,
+            color: 'text-green-600',
+            bgColor: 'bg-green-50',
+            borderColor: 'border-green-200',
+            timestamp: updatedDate.getTime()
+          })
+        } else if (med.status === 'active') {
+          // Active medication added
           activities.push({
             id: `med-active-${med.id}`,
             type: 'medication',
@@ -234,6 +533,20 @@ export default function RecentActivity({ familyMembers = [] }: RecentActivityPro
             bgColor: 'bg-blue-50',
             borderColor: 'border-blue-200',
             timestamp: startDate.getTime()
+          })
+        } else if (med.status === 'discontinued') {
+          // Medication discontinued
+          activities.push({
+            id: `med-discontinued-${med.id}`,
+            type: 'medication',
+            title: 'Medication discontinued',
+            description: `${memberName} - ${med.name} (${med.dosage})`,
+            time: formatTimeAgo(updatedDate),
+            icon: AlertTriangle,
+            color: 'text-orange-600',
+            bgColor: 'bg-orange-50',
+            borderColor: 'border-orange-200',
+            timestamp: updatedDate.getTime()
           })
         }
       })
@@ -265,29 +578,105 @@ export default function RecentActivity({ familyMembers = [] }: RecentActivityPro
       })
     }
 
-    // Process reminders (sort by date desc, take most recent 10)
+    // Process reminders
     if (data.reminders) {
-      const sortedReminders = [...data.reminders]
-        .sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime())
-        .slice(0, 10)
-      
-      sortedReminders.forEach((reminder: any) => {
+      data.reminders.forEach((reminder: any) => {
         const memberName = reminder.member?.name || 'Family member'
         const reminderDate = new Date(reminder.date)
-        const daysDiff = Math.floor((reminderDate.getTime() - now) / (1000 * 60 * 60 * 24))
+        const reminderTime = reminder.time || '10:00 AM'
         
-        if (reminder.status === 'active') {
+        // Parse reminder time to create full datetime
+        let reminderDateTime = new Date(reminderDate)
+        try {
+          // Parse time string (handle both 12-hour and 24-hour formats)
+          let hours = 0
+          let minutes = 0
+          
+          if (reminderTime.includes('AM') || reminderTime.includes('PM')) {
+            const timeMatch = reminderTime.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i)
+            if (timeMatch) {
+              hours = parseInt(timeMatch[1])
+              minutes = parseInt(timeMatch[2])
+              const period = timeMatch[3].toUpperCase()
+              
+              if (period === 'PM' && hours !== 12) hours += 12
+              if (period === 'AM' && hours === 12) hours = 0
+            }
+          } else {
+            const timeMatch = reminderTime.match(/(\d{1,2}):(\d{2})/)
+            if (timeMatch) {
+              hours = parseInt(timeMatch[1])
+              minutes = parseInt(timeMatch[2])
+            }
+          }
+          
+          reminderDateTime.setHours(hours, minutes, 0, 0)
+        } catch (error) {
+          // If parsing fails, use default time
+          reminderDateTime.setHours(10, 0, 0, 0)
+        }
+        
+        const reminderTimestamp = reminderDateTime.getTime()
+        const isPast = reminderTimestamp < now
+        const daysDiff = Math.floor((reminderTimestamp - now) / (1000 * 60 * 60 * 24))
+        
+        if (reminder.status === 'completed') {
+          // Reminder completed/fulfilled
           activities.push({
-            id: `reminder-${reminder.id}`,
+            id: `reminder-completed-${reminder.id}`,
             type: 'reminder',
-            title: 'Reminder set',
+            title: 'Reminder completed',
             description: `${memberName} - ${reminder.title}`,
-            time: daysDiff === 0 ? 'Today' : daysDiff === 1 ? 'Tomorrow' : daysDiff < 0 ? `${Math.abs(daysDiff)} days ago` : `In ${daysDiff} days`,
-            icon: Clock,
-            color: daysDiff <= 1 && daysDiff >= 0 ? 'text-red-600' : 'text-purple-600',
-            bgColor: daysDiff <= 1 && daysDiff >= 0 ? 'bg-red-50' : 'bg-purple-50',
-            borderColor: daysDiff <= 1 && daysDiff >= 0 ? 'border-red-200' : 'border-purple-200',
-            timestamp: reminderDate.getTime()
+            time: formatTimeAgo(new Date(reminder.updatedAt)),
+            icon: CheckCircle,
+            color: 'text-green-600',
+            bgColor: 'bg-green-50',
+            borderColor: 'border-green-200',
+            timestamp: new Date(reminder.updatedAt).getTime()
+          })
+        } else if (reminder.status === 'active') {
+          if (isPast) {
+            // Reminder missed (past date/time and still active)
+            activities.push({
+              id: `reminder-missed-${reminder.id}`,
+              type: 'reminder',
+              title: 'Reminder missed',
+              description: `${memberName} - ${reminder.title} was not completed`,
+              time: formatTimeAgo(reminderDateTime),
+              icon: AlertTriangle,
+              color: 'text-red-600',
+              bgColor: 'bg-red-50',
+              borderColor: 'border-red-200',
+              timestamp: reminderTimestamp
+            })
+          } else {
+            // Upcoming reminder
+            activities.push({
+              id: `reminder-upcoming-${reminder.id}`,
+              type: 'reminder',
+              title: 'Reminder set',
+              description: `${memberName} - ${reminder.title}`,
+              time: daysDiff === 0 ? 'Today' : daysDiff === 1 ? 'Tomorrow' : daysDiff < 0 ? `${Math.abs(daysDiff)} days ago` : `In ${daysDiff} days`,
+              icon: Clock,
+              color: daysDiff <= 1 && daysDiff >= 0 ? 'text-red-600' : 'text-purple-600',
+              bgColor: daysDiff <= 1 && daysDiff >= 0 ? 'bg-red-50' : 'bg-purple-50',
+              borderColor: daysDiff <= 1 && daysDiff >= 0 ? 'border-red-200' : 'border-purple-200',
+              timestamp: reminderTimestamp
+            })
+          }
+        } else if (reminder.status === 'cancelled') {
+          // Reminder cancelled
+          activities.push({
+            id: `reminder-cancelled-${reminder.id}`,
+            type: 'reminder',
+            title: 'Reminder cancelled',
+            description: `${memberName} - ${reminder.title}`,
+            time: formatTimeAgo(new Date(reminder.updatedAt)),
+            icon: AlertTriangle,
+            color: 'text-gray-600',
+            bgColor: 'bg-gray-50',
+            borderColor: 'border-gray-200',
+            timestamp: new Date(reminder.updatedAt).getTime()
           })
         }
       })
@@ -599,6 +988,8 @@ export default function RecentActivity({ familyMembers = [] }: RecentActivityPro
           ) : (
             activitiesToShow.map((activity, index) => {
           const Icon = activity.icon
+          const isMissedAppointment = activity.title === 'Appointment missed' && activity.appointmentId
+          
           return (
             <motion.div
               key={activity.id}
@@ -618,6 +1009,24 @@ export default function RecentActivity({ familyMembers = [] }: RecentActivityPro
                 <p className="text-sm text-gray-600">
                   {activity.description}
                 </p>
+                {isMissedAppointment && (
+                  <div className="mt-2 flex space-x-2">
+                    <button
+                      onClick={() => handleMarkCompleted(activity.appointmentId)}
+                      className="inline-flex items-center px-3 py-1 text-xs font-medium text-green-700 bg-green-100 rounded-lg hover:bg-green-200 transition-colors"
+                    >
+                      <CheckCircle className="w-3 h-3 mr-1" />
+                      Mark as Completed
+                    </button>
+                    <button
+                      onClick={() => handleMarkMissed(activity.appointmentId)}
+                      className="inline-flex items-center px-3 py-1 text-xs font-medium text-red-700 bg-red-100 rounded-lg hover:bg-red-200 transition-colors"
+                    >
+                      <X className="w-3 h-3 mr-1" />
+                      Mark as Missed
+                    </button>
+                  </div>
+                )}
               </div>
               
               <div className="flex items-center space-x-2 text-sm text-gray-500">
@@ -638,46 +1047,35 @@ export default function RecentActivity({ familyMembers = [] }: RecentActivityPro
         transition={{ duration: 0.6, delay: 0.3 }}
         className="mt-8 pt-6 border-t border-gray-200"
       >
-        <div className="grid grid-cols-3 gap-4 text-center">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
           <div>
             <div className="text-2xl font-bold text-green-600">{activities.length}</div>
             <div className="text-sm text-gray-600">Total Activities</div>
           </div>
           <div>
-            <div className="text-2xl font-bold text-blue-600">
-              {(() => {
-                // Count upcoming appointments from activities (more accurate)
-                const upcomingCount = activities.filter(activity => 
-                  activity.type === 'appointment' && 
-                  activity.title === 'Upcoming appointment'
-                ).length
-                
-                // If we have activities from backend, use that count
-                if (activities.length > 0 && upcomingCount > 0) {
-                  return upcomingCount
-                }
-                
-                // Otherwise fallback to family members data
-                const now = new Date()
-                now.setHours(0, 0, 0, 0)
-                return familyMembers.filter(member => {
-                  if (!member.nextAppointment || member.nextAppointment.trim() === '') return false
-                  try {
-                    const appointmentDate = new Date(member.nextAppointment)
-                    appointmentDate.setHours(0, 0, 0, 0)
-                    const daysTo = Math.floor((appointmentDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24))
-                    return daysTo >= 0 && daysTo <= 30
-                  } catch {
-                    return false
-                  }
-                }).length
-              })()}
+            <div className="text-2xl font-bold text-green-600">
+              {activities.filter(activity => 
+                activity.title === 'Medication taken' || activity.title === 'Reminder completed'
+              ).length}
             </div>
-            <div className="text-sm text-gray-600">Upcoming (30 days)</div>
+            <div className="text-sm text-gray-600">Completed</div>
           </div>
           <div>
-            <div className="text-2xl font-bold text-orange-600">{calculateAlerts()}</div>
-            <div className="text-sm text-gray-600">Health Alerts</div>
+            <div className="text-2xl font-bold text-red-600">
+              {activities.filter(activity => 
+                activity.title === 'Reminder missed' || activity.title === 'Appointment missed'
+              ).length}
+            </div>
+            <div className="text-sm text-gray-600">Missed</div>
+          </div>
+          <div>
+            <div className="text-2xl font-bold text-blue-600">
+              {activities.filter(activity => 
+                activity.type === 'appointment' && 
+                (activity.title === 'Upcoming appointment' || activity.title === 'Appointment soon')
+              ).length}
+            </div>
+            <div className="text-sm text-gray-600">Upcoming</div>
           </div>
         </div>
       </motion.div>

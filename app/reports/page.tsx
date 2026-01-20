@@ -527,7 +527,8 @@ export default function Reports() {
 
   const filteredReports = reports.filter(report => {
     const matchesType = filterType === 'all' || report.type === filterType
-    const matchesSearch = report.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    const matchesSearch = searchTerm === '' ||
+                         report.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          report.familyMemberName.toLowerCase().includes(searchTerm.toLowerCase())
     return matchesType && matchesSearch
   })

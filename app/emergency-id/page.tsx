@@ -47,6 +47,9 @@ interface FamilyMember {
   insurance: any
   doctor: any
   bloodType?: string
+  phone?: string
+  email?: string
+  address?: string
   status: 'excellent' | 'good' | 'fair' | 'poor'
 }
 
@@ -109,15 +112,25 @@ export default function EmergencyID() {
         throw new Error('No authentication token available')
       }
       
-      // Load family members from GraphQL
-      const GET_FAMILY_MEMBERS = `
-        query GetFamilyMembers {
+      // Load user data and family members from GraphQL
+      const GET_USER_DATA = `
+        query GetUserData {
+          me {
+            id
+            name
+            email
+            phone
+            profileImage
+          }
           familyMembers {
             id
             name
             dob
+            gender
             relationship
             bloodType
+            phone
+            email
             conditions
             allergies
             emergencyContacts
@@ -128,8 +141,8 @@ export default function EmergencyID() {
         }
       `
       
-      const data = await graphqlRequest(GET_FAMILY_MEMBERS, {}, token)
-      console.log('🏥 Emergency ID: Loaded family members from GraphQL:', data)
+      const data = await graphqlRequest(GET_USER_DATA, {}, token)
+      console.log('🏥 Emergency ID: Loaded user and family members from GraphQL:', data)
       
       // Convert backend data to frontend format
       const formattedMembers: FamilyMember[] = (data.familyMembers || []).map((member: any) => ({
@@ -148,6 +161,9 @@ export default function EmergencyID() {
         insurance: member.insurance || {},
         doctor: member.doctor || {},
         bloodType: member.bloodType || 'Unknown',
+        phone: member.phone || undefined,
+        email: member.email || undefined,
+        address: member.address || (member.insurance?.address) || undefined,
         status: 'good' as const
       }))
       
@@ -240,24 +256,67 @@ export default function EmergencyID() {
         
         // Parse emergency contacts from member data
         const emergencyContacts = []
-        if (member.emergencyContacts && typeof member.emergencyContacts === 'object') {
-          // Handle different emergency contact formats
-          if (member.emergencyContacts.name && member.emergencyContacts.phone) {
-            emergencyContacts.push({
-              name: member.emergencyContacts.name,
-              relationship: member.emergencyContacts.relationship || 'Emergency Contact',
-              phone: member.emergencyContacts.phone,
-              isPrimary: true
-            })
+        if (member.emergencyContacts) {
+          try {
+            // Handle array format
+            if (Array.isArray(member.emergencyContacts)) {
+              member.emergencyContacts.forEach((contact: any, index: number) => {
+                if (contact && (contact.name || contact.phone)) {
+                  emergencyContacts.push({
+                    name: contact.name || 'Emergency Contact',
+                    relationship: contact.relationship || contact.relation || 'Emergency Contact',
+                    phone: contact.phone || contact.phoneNumber || 'N/A',
+                    isPrimary: index === 0 || contact.isPrimary === true
+                  })
+                }
+              })
+            } 
+            // Handle object format (single contact or object with contacts array)
+            else if (typeof member.emergencyContacts === 'object') {
+              // Check if it's an object with a contacts array
+              if (member.emergencyContacts.contacts && Array.isArray(member.emergencyContacts.contacts)) {
+                member.emergencyContacts.contacts.forEach((contact: any, index: number) => {
+                  if (contact && (contact.name || contact.phone)) {
+                    emergencyContacts.push({
+                      name: contact.name || 'Emergency Contact',
+                      relationship: contact.relationship || contact.relation || 'Emergency Contact',
+                      phone: contact.phone || contact.phoneNumber || 'N/A',
+                      isPrimary: index === 0 || contact.isPrimary === true
+                    })
+                  }
+                })
+              }
+              // Single contact object
+              else if (member.emergencyContacts.name || member.emergencyContacts.phone) {
+                emergencyContacts.push({
+                  name: member.emergencyContacts.name || 'Emergency Contact',
+                  relationship: member.emergencyContacts.relationship || member.emergencyContacts.relation || 'Emergency Contact',
+                  phone: member.emergencyContacts.phone || member.emergencyContacts.phoneNumber || 'N/A',
+                  isPrimary: true
+                })
+              }
+            }
+          } catch (error) {
+            console.error('Error parsing emergency contacts:', error)
           }
         }
         
-        // Add default emergency contact if none exists
+        // Add user's own phone as emergency contact if available and no contacts exist
+        if (emergencyContacts.length === 0 && user?.phoneNumbers && user.phoneNumbers.length > 0) {
+          emergencyContacts.push({
+            name: user.firstName || user.name || 'Self',
+            relationship: 'Self',
+            phone: user.phoneNumbers[0].phoneNumber || 'N/A',
+            isPrimary: true
+          })
+        }
+        
+        // Add default emergency contact only if absolutely no contacts exist
         if (emergencyContacts.length === 0) {
           emergencyContacts.push({
             name: 'Emergency Contact',
-            relationship: 'Contact',
-            phone: '+1-XXX-XXXX',
+            relationship: 'Please add contact',
+            phone: 'Not provided',
             isPrimary: true
           })
         }
@@ -578,8 +637,18 @@ export default function EmergencyID() {
                       </h4>
                       <div className="grid grid-cols-2 gap-2 text-sm">
                         <div><strong>Name:</strong> {selectedMemberData.name}</div>
-                        <div><strong>Age:</strong> {selectedMemberData.age}</div>
-                        <div><strong>Blood Type:</strong> {selectedEmergencyData.bloodType}</div>
+                        <div><strong>Age:</strong> {selectedMemberData.age} years</div>
+                        <div><strong>Blood Type:</strong> {selectedEmergencyData.bloodType !== 'Unknown' ? selectedEmergencyData.bloodType : 'Not specified'}</div>
+                        <div><strong>Relationship:</strong> {selectedMemberData.relationship}</div>
+                        {selectedMemberData.phone && (
+                          <div><strong>Phone:</strong> {selectedMemberData.phone}</div>
+                        )}
+                        {selectedMemberData.email && (
+                          <div><strong>Email:</strong> {selectedMemberData.email}</div>
+                        )}
+                        {selectedMemberData.address && (
+                          <div className="col-span-2"><strong>Address:</strong> {selectedMemberData.address}</div>
+                        )}
                         <div><strong>Status:</strong> 
                           <span className={`ml-1 px-2 py-1 rounded-full text-xs ${
                             selectedMemberData.status === 'excellent' ? 'bg-green-100 text-green-800' :
@@ -663,18 +732,42 @@ export default function EmergencyID() {
                       <h4 className="font-semibold text-green-900 mb-2 flex items-center space-x-2">
                         <Phone className="w-4 h-4" />
                         <span>Emergency Contacts</span>
+                        {selectedEmergencyData.emergencyContacts.length > 0 && (
+                          <span className="ml-2 px-2 py-0.5 bg-green-200 text-green-800 rounded-full text-xs font-medium">
+                            {selectedEmergencyData.emergencyContacts.length}
+                          </span>
+                        )}
                       </h4>
-                      <div className="space-y-2">
-                        {selectedEmergencyData.emergencyContacts.map((contact, index) => (
-                          <div key={index} className="flex items-center justify-between">
-                            <div>
-                              <div className="font-medium text-green-900">{contact.name}</div>
-                              <div className="text-sm text-green-700">{contact.relationship}</div>
+                      {selectedEmergencyData.emergencyContacts.length > 0 ? (
+                        <div className="space-y-2">
+                          {selectedEmergencyData.emergencyContacts.map((contact: any, index: number) => (
+                            <div key={index} className="flex items-center justify-between p-2 bg-white rounded-lg border border-green-200">
+                              <div className="flex-1">
+                                <div className="font-medium text-green-900 flex items-center space-x-2">
+                                  {contact.name}
+                                  {contact.isPrimary && (
+                                    <span className="px-1.5 py-0.5 bg-green-200 text-green-800 rounded text-xs">Primary</span>
+                                  )}
+                                </div>
+                                <div className="text-sm text-green-700">{contact.relationship}</div>
+                              </div>
+                              <div className="text-sm text-green-800 font-mono">
+                                {contact.phone && contact.phone !== 'N/A' && contact.phone !== 'Not provided' ? (
+                                  <a href={`tel:${contact.phone}`} className="hover:text-green-600">
+                                    {contact.phone}
+                                  </a>
+                                ) : (
+                                  <span className="text-gray-500">{contact.phone || 'Not provided'}</span>
+                                )}
+                              </div>
                             </div>
-                            <div className="text-sm text-green-800 font-mono">{contact.phone}</div>
-                          </div>
-                        ))}
-                      </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="text-sm text-green-700 italic py-2">
+                          No emergency contacts provided. Please add emergency contacts in family member settings.
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>

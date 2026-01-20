@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import React, { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
 import { useSearchParams } from 'next/navigation'
 import Navigation from '@/components/Navigation'
@@ -67,6 +67,10 @@ export default function AddMedicationPage() {
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [showSuccess, setShowSuccess] = useState(false)
   const [familyMembers, setFamilyMembers] = useState<FamilyMember[]>([])
+  const [medicationSuggestions, setMedicationSuggestions] = useState<{ name: string; commonDosages: string[]; description?: string }[]>([])
+  const [showSuggestions, setShowSuggestions] = useState(false)
+  const [dosageSuggestions, setDosageSuggestions] = useState<string[]>([])
+  const [loadingSuggestions, setLoadingSuggestions] = useState(false)
 
   // Load family members from backend and handle URL parameters
   useEffect(() => {
@@ -111,6 +115,7 @@ export default function AddMedicationPage() {
     'Weekly',
     'Monthly'
   ]
+
 
   const commonSideEffects = [
     'Nausea',
@@ -270,12 +275,75 @@ export default function AddMedicationPage() {
     })
   }
 
+  // Handle medication name input with AI-powered autocomplete
+  const handleMedicationNameChange = async (value: string) => {
+    setForm({ ...form, name: value })
+    
+    if (value.length > 0) {
+      setLoadingSuggestions(true)
+      
+      try {
+        // Fetch suggestions from API (uses AI + RxNorm + fallback)
+        const response = await fetch(`/api/medications/suggest?q=${encodeURIComponent(value)}&limit=10`)
+        
+        if (response.ok) {
+          const data = await response.json()
+          const suggestions = data.suggestions || []
+          
+          setMedicationSuggestions(suggestions)
+          setShowSuggestions(suggestions.length > 0)
+          
+          // Auto-suggest dosage if exact match found
+          const exactMatch = suggestions.find(
+            (med: any) => med.name.toLowerCase() === value.toLowerCase()
+          )
+          
+          if (exactMatch && exactMatch.commonDosages.length > 0) {
+            setDosageSuggestions(exactMatch.commonDosages)
+            // Auto-fill first common dosage if dosage is empty
+            if (!form.dosage) {
+              setForm({ ...form, name: value, dosage: exactMatch.commonDosages[0] })
+            }
+          } else {
+            setDosageSuggestions([])
+          }
+        } else {
+          setMedicationSuggestions([])
+          setShowSuggestions(false)
+        }
+      } catch (error) {
+        console.error('Error fetching medication suggestions:', error)
+        setMedicationSuggestions([])
+        setShowSuggestions(false)
+      } finally {
+        setLoadingSuggestions(false)
+      }
+    } else {
+      setMedicationSuggestions([])
+      setShowSuggestions(false)
+      setDosageSuggestions([])
+    }
+  }
+
+  // Handle medication selection from suggestions
+  const selectMedication = (medication: { name: string; commonDosages: string[] }) => {
+    setForm({ 
+      ...form, 
+      name: medication.name,
+      dosage: medication.commonDosages[0] || form.dosage || ''
+    })
+    setDosageSuggestions(medication.commonDosages)
+    setShowSuggestions(false)
+  }
+
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50">
+    <>
+      <main className="min-h-screen bg-gradient-to-br from-gray-50 to-blue-50 pb-8">
       <Navigation />
       
-      <div className="container mx-auto px-4 pt-24 pb-8">
-        {/* Header */}
+      <div className="pt-20 px-4 sm:px-6 lg:px-8">
+        <div className="max-w-7xl mx-auto">
+          {/* Header */}
         <motion.div
           initial={{ opacity: 0, y: -20 }}
           animate={{ opacity: 1, y: 0 }}
@@ -383,21 +451,52 @@ export default function AddMedicationPage() {
                           type="text"
                           required
                           value={form.name || ''}
-                          onChange={(e) => setForm({ ...form, name: e.target.value })}
+                          onChange={(e) => handleMedicationNameChange(e.target.value)}
+                          onFocus={() => {
+                            if (form.name && medicationSuggestions.length > 0) {
+                              setShowSuggestions(true)
+                            }
+                          }}
+                          onBlur={() => {
+                            // Delay hiding suggestions to allow click
+                            setTimeout(() => setShowSuggestions(false), 200)
+                          }}
                           className="w-full px-4 py-3 text-base border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary-500"
-                          placeholder="e.g., Lisinopril"
-                          list="medication-suggestions"
+                          placeholder="e.g., Combiflam, Paracetamol"
+                          autoComplete="off"
                         />
-                        <datalist id="medication-suggestions">
-                          <option value="Lisinopril" />
-                          <option value="Metformin" />
-                          <option value="Atorvastatin" />
-                          <option value="Amlodipine" />
-                          <option value="Omeprazole" />
-                          <option value="Levothyroxine" />
-                          <option value="Metoprolol" />
-                          <option value="Losartan" />
-                        </datalist>
+                        {loadingSuggestions && (
+                          <div className="absolute z-50 w-full mt-1 bg-white border border-gray-300 rounded-xl shadow-lg p-4">
+                            <div className="flex items-center space-x-2 text-gray-600">
+                              <div className="w-4 h-4 border-2 border-primary-600 border-t-transparent rounded-full animate-spin"></div>
+                              <span className="text-sm">Searching medications...</span>
+                            </div>
+                          </div>
+                        )}
+                        {showSuggestions && !loadingSuggestions && medicationSuggestions.length > 0 && (
+                          <div className="absolute z-50 w-full mt-1 bg-white border border-gray-300 rounded-xl shadow-lg max-h-60 overflow-y-auto">
+                            {medicationSuggestions.map((medication, index) => (
+                              <button
+                                key={index}
+                                type="button"
+                                onClick={() => selectMedication(medication)}
+                                className="w-full text-left px-4 py-3 hover:bg-primary-50 hover:text-primary-700 transition-colors border-b border-gray-100 last:border-b-0"
+                              >
+                                <div className="font-medium">{medication.name}</div>
+                                {medication.commonDosages && medication.commonDosages.length > 0 && (
+                                  <div className="text-xs text-gray-500 mt-1">
+                                    Dosages: {medication.commonDosages.join(', ')}
+                                  </div>
+                                )}
+                                {medication.description && (
+                                  <div className="text-xs text-gray-400 mt-1">
+                                    {medication.description}
+                                  </div>
+                                )}
+                              </button>
+                            ))}
+                          </div>
+                        )}
                       </div>
                       <div className="mt-2 bg-green-50 border border-green-200 rounded-lg p-2">
                         <p className="text-xs text-green-800">
@@ -418,19 +517,32 @@ export default function AddMedicationPage() {
                           value={form.dosage || ''}
                           onChange={(e) => setForm({ ...form, dosage: e.target.value })}
                           className="w-full px-4 py-3 text-base border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary-500"
-                          placeholder="e.g., 10mg"
+                          placeholder="e.g., 250mg, 500mg"
                           list="dosage-suggestions"
+                          autoComplete="off"
                         />
                         <datalist id="dosage-suggestions">
-                          <option value="5mg" />
-                          <option value="10mg" />
-                          <option value="20mg" />
-                          <option value="25mg" />
-                          <option value="50mg" />
-                          <option value="100mg" />
-                          <option value="250mg" />
-                          <option value="500mg" />
+                          {dosageSuggestions.map((dosage, index) => (
+                            <option key={index} value={dosage} />
+                          ))}
+                          {dosageSuggestions.length === 0 && (
+                            <>
+                              <option value="5mg" />
+                              <option value="10mg" />
+                              <option value="20mg" />
+                              <option value="25mg" />
+                              <option value="50mg" />
+                              <option value="100mg" />
+                              <option value="250mg" />
+                              <option value="500mg" />
+                            </>
+                          )}
                         </datalist>
+                        {dosageSuggestions.length > 0 && (
+                          <div className="mt-1 text-xs text-primary-600">
+                            💡 Suggested dosages: {dosageSuggestions.join(', ')}
+                          </div>
+                        )}
                       </div>
                     </div>
 
@@ -705,6 +817,8 @@ export default function AddMedicationPage() {
           </div>
         </div>
       </div>
-    </div>
+      </div>
+    </main>
+    </>
   )
 }

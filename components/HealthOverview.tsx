@@ -98,20 +98,56 @@ export default function HealthOverview({ familyMembers, dashboardStats }: Health
       
       if (data?.appointments) {
         const now = new Date()
-        now.setHours(0, 0, 0, 0) // Set to start of day for accurate comparison
+        
+        // Helper function to check if appointment date/time has passed
+        const isAppointmentPast = (appt: any): boolean => {
+          try {
+            const dateStr = appt.date
+            const timeStr = appt.time || '10:00 AM'
+            
+            // Parse time string (handle both 12-hour and 24-hour formats)
+            let hours = 0
+            let minutes = 0
+            
+            if (timeStr.includes('AM') || timeStr.includes('PM')) {
+              const timeMatch = timeStr.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i)
+              if (timeMatch) {
+                hours = parseInt(timeMatch[1])
+                minutes = parseInt(timeMatch[2])
+                const period = timeMatch[3].toUpperCase()
+                
+                if (period === 'PM' && hours !== 12) hours += 12
+                if (period === 'AM' && hours === 12) hours = 0
+              }
+            } else {
+              const timeMatch = timeStr.match(/(\d{1,2}):(\d{2})/)
+              if (timeMatch) {
+                hours = parseInt(timeMatch[1])
+                minutes = parseInt(timeMatch[2])
+              }
+            }
+            
+            const apptDate = new Date(dateStr)
+            apptDate.setHours(hours, minutes, 0, 0)
+            
+            return apptDate.getTime() < now.getTime()
+          } catch (error) {
+            console.error('Error checking appointment date:', error)
+            return false
+          }
+        }
         
         const upcoming = data.appointments
           .map((appt: any) => {
             try {
-              const apptDate = new Date(appt.date)
-              apptDate.setHours(0, 0, 0, 0)
-              const isFuture = apptDate.getTime() >= now.getTime()
-              const isNotCancelled = appt.status?.toLowerCase() !== 'cancelled'
+              const isPast = isAppointmentPast(appt)
+              const isNotCancelled = appt.status?.toLowerCase() !== 'cancelled' && appt.status?.toLowerCase() !== 'completed'
+              const isActive = appt.status?.toLowerCase() === 'scheduled' || appt.status?.toLowerCase() === 'confirmed' || appt.status?.toLowerCase() === 'rescheduled'
               
               return {
                 appt,
-                isUpcoming: isFuture && isNotCancelled,
-                apptDate
+                isUpcoming: isActive && !isPast && isNotCancelled,
+                apptDate: new Date(appt.date)
               }
             } catch (error) {
               console.error('Error parsing appointment date:', appt.date, error)

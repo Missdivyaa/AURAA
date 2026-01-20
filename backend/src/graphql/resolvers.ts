@@ -592,7 +592,7 @@ export const resolvers = {
     createMedication: async (_: any, { input }: { input: any }, { userContext }: { userContext: UserContext }) => {
       if (!userContext) throw new Error('Authentication required');
       
-      return await prisma.medication.create({
+      const medication = await prisma.medication.create({
         data: {
           ...input,
           userId: userContext.userId,
@@ -600,6 +600,59 @@ export const resolvers = {
         },
         include: { member: true }
       });
+
+      // Automatically create reminders based on medication frequency
+      try {
+        const frequency = input.frequency?.toLowerCase() || '';
+        const medicationName = input.name || 'Medication';
+        const startDate = new Date(input.startDate);
+        
+        // Determine reminder times based on frequency
+        let reminderTimes: string[] = [];
+        let reminderFrequency = 'daily';
+        
+        if (frequency.includes('twice') || frequency.includes('2 times')) {
+          reminderTimes = ['09:00', '21:00']; // Morning and evening
+        } else if (frequency.includes('three times') || frequency.includes('3 times') || frequency.includes('thrice')) {
+          reminderTimes = ['08:00', '14:00', '20:00']; // Morning, afternoon, evening
+        } else if (frequency.includes('four times') || frequency.includes('4 times')) {
+          reminderTimes = ['08:00', '12:00', '18:00', '22:00'];
+        } else if (frequency.includes('weekly') || frequency.includes('once a week')) {
+          reminderTimes = ['10:00'];
+          reminderFrequency = 'weekly';
+        } else if (frequency.includes('monthly') || frequency.includes('once a month')) {
+          reminderTimes = ['10:00'];
+          reminderFrequency = 'monthly';
+        } else {
+          // Default: once daily
+          reminderTimes = ['09:00'];
+        }
+
+        // Create reminders for each time
+        for (const time of reminderTimes) {
+          await prisma.reminder.create({
+            data: {
+              userId: userContext.userId,
+              memberId: input.memberId || null,
+              title: `Take ${medicationName}`,
+              description: `${medicationName} ${input.dosage || ''}`.trim(),
+              type: 'medication',
+              date: startDate,
+              time: time,
+              frequency: reminderFrequency,
+              priority: 'high',
+              status: 'active',
+            }
+          });
+        }
+        
+        console.log(`✅ Created ${reminderTimes.length} reminder(s) for medication: ${medicationName}`);
+      } catch (reminderError: any) {
+        console.error('⚠️ Error creating reminders for medication:', reminderError);
+        // Don't fail medication creation if reminder creation fails
+      }
+
+      return medication;
     },
 
     updateMedication: async (_: any, { id, input }: { id: string, input: any }, { userContext }: { userContext: UserContext }) => {

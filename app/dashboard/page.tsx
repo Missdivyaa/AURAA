@@ -47,6 +47,7 @@ const GET_FAMILY_MEMBERS = `
       updatedAt
       medications {
         id
+        status
       }
     }
   }
@@ -255,7 +256,9 @@ export default function UserDashboard() {
           }, null as any)
           return new Date(latest.date).toISOString()
         })(),
-        medications: Array.isArray(member.medications) ? member.medications.length : 0,
+        medications: Array.isArray(member.medications) 
+          ? member.medications.filter((med: any) => med.status === 'active').length 
+          : 0,
         conditions: Array.isArray(member.conditions) ? member.conditions : [],
         allergies: Array.isArray(member.allergies) ? member.allergies : [],
         emergencyContacts: member.emergencyContacts || {},

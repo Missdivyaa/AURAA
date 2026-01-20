@@ -214,7 +214,8 @@ export default function Records() {
 
   const filteredRecords = records.filter(record => {
     const matchesTab = activeTab === 'all' || record.type === activeTab
-    const matchesSearch = record.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    const matchesSearch = searchTerm === '' ||
+                         record.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          record.familyMemberName.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          record.provider.toLowerCase().includes(searchTerm.toLowerCase())
     return matchesTab && matchesSearch

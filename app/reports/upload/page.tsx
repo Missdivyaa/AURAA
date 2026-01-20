@@ -346,11 +346,6 @@ export default function UploadReports() {
   }
 
   const handleFiles = async (files: FileList) => {
-    if (!selectedMember) {
-      alert('Please select a family member first')
-      return
-    }
-
     if (!user || !isSignedIn) {
       alert('Please sign in to upload reports')
       return
@@ -395,6 +390,10 @@ export default function UploadReports() {
 
           // CRITICAL: Only proceed if validation passes - reject invalid reports immediately
           if (!validation.isValid) {
+            // Try to extract patient name for display even if report is invalid
+            const extractedText = fileInfo.extractedText || ''
+            const patientName = extractPatientName(extractedText) || 'Unknown Patient'
+            
             rejected.push({
               id: `file-${Date.now()}-${index}`,
               name: file.name,
@@ -402,8 +401,8 @@ export default function UploadReports() {
               type: file.type,
               category: 'general',
               uploadDate: new Date().toISOString().split('T')[0],
-              familyMemberId: selectedMember,
-              familyMemberName: familyMembers.find(m => m.id === selectedMember)?.name || '',
+              familyMemberId: '',
+              familyMemberName: patientName,
               description: '',
               tags: [],
               medicalScore: validation.accuracyScore,
@@ -421,11 +420,12 @@ export default function UploadReports() {
           const patientName = extractPatientName(extractedText)
           const patientInfo = extractPatientInfo(extractedText)
           
-          // Step 3: Check if patient name matches any family member
-          let targetMemberId = selectedMember
+          // Step 3: Determine target member ID
+          let targetMemberId = selectedMember || ''
           let targetMemberName = familyMembers.find(m => m.id === selectedMember)?.name || ''
           
-          if (patientName) {
+          // If no member selected and patient name found, try to match or create
+          if (!targetMemberId && patientName) {
             const matchingMemberId = findMatchingMember(patientName)
             
             if (matchingMemberId) {
@@ -434,19 +434,128 @@ export default function UploadReports() {
               targetMemberName = familyMembers.find(m => m.id === matchingMemberId)?.name || patientName
               console.log(`✅ Found matching family member: ${targetMemberName}`)
             } else {
-              // Patient not found - show modal to add them
-              console.log(`⚠️ Patient "${patientName}" not found in family members. Showing add member modal.`)
-              setPendingFileData({
-                file,
-                fileInfo,
-                validation,
-                index,
-                extractedPatientName: patientName,
-                extractedPatientInfo: patientInfo
-              })
-              setShowAddMemberModal(true)
-              // Wait for user to add member - the modal will call handleAddFamilyMember
-              continue // Skip to next file - will be processed after member is added
+              // Patient not found - automatically create member if no members exist, otherwise show modal
+              if (familyMembers.length === 0) {
+                // No members exist - auto-create from report
+                console.log(`📝 No family members exist. Auto-creating member from report: ${patientName}`)
+                try {
+                  // Calculate date of birth from age if available
+                  let dob = new Date('1990-01-01') // Default DOB
+                  if (patientInfo?.age) {
+                    const currentYear = new Date().getFullYear()
+                    dob = new Date(currentYear - patientInfo.age, 0, 1)
+                  }
+
+                  // Create family member automatically
+                  const memberData = await graphqlRequest(CREATE_FAMILY_MEMBER, {
+                    input: {
+                      name: patientName,
+                      relationship: 'Self', // Default to Self for first member
+                      dob: dob.toISOString(),
+                      gender: patientInfo?.gender || 'Unknown',
+                      bloodType: patientInfo?.bloodType || undefined,
+                    }
+                  }, token)
+
+                  targetMemberId = memberData.createFamilyMember.id
+                  targetMemberName = memberData.createFamilyMember.name
+
+                  // Reload family members
+                  const membersData = await graphqlRequest(GET_FAMILY_MEMBERS, {}, token)
+                  if (membersData && membersData.familyMembers) {
+                    const members = membersData.familyMembers.map((m: any) => ({
+                      id: m.id,
+                      name: m.name || '',
+                      relationship: m.relationship || 'Family Member'
+                    }))
+                    setFamilyMembers(members)
+                    setSelectedMember(targetMemberId) // Auto-select the newly created member
+                  }
+
+                  console.log(`✅ Auto-created family member: ${targetMemberName}`)
+                } catch (createError: any) {
+                  console.error('Error auto-creating family member:', createError)
+                  // If auto-create fails, show modal
+                  setPendingFileData({
+                    file,
+                    fileInfo,
+                    validation,
+                    index,
+                    extractedPatientName: patientName,
+                    extractedPatientInfo: patientInfo
+                  })
+                  setShowAddMemberModal(true)
+                  continue
+                }
+              } else {
+                // Members exist but patient doesn't match - show modal to add them
+                console.log(`⚠️ Patient "${patientName}" not found in family members. Showing add member modal.`)
+                setPendingFileData({
+                  file,
+                  fileInfo,
+                  validation,
+                  index,
+                  extractedPatientName: patientName,
+                  extractedPatientInfo: patientInfo
+                })
+                setShowAddMemberModal(true)
+                continue // Skip to next file - will be processed after member is added
+              }
+            }
+          } else if (!targetMemberId && !patientName) {
+            // No member selected and no patient name found - use first member or create default
+            if (familyMembers.length > 0) {
+              targetMemberId = familyMembers[0].id
+              targetMemberName = familyMembers[0].name
+              console.log(`⚠️ No patient name found in report. Using first family member: ${targetMemberName}`)
+            } else {
+              // No members and no patient name - create a default member
+              console.log(`⚠️ No patient name found and no members exist. Creating default member.`)
+              try {
+                const memberData = await graphqlRequest(CREATE_FAMILY_MEMBER, {
+                  input: {
+                    name: 'Patient from Report',
+                    relationship: 'Self',
+                    dob: new Date('1990-01-01').toISOString(),
+                    gender: 'Unknown',
+                  }
+                }, token)
+
+                targetMemberId = memberData.createFamilyMember.id
+                targetMemberName = memberData.createFamilyMember.name
+
+                // Reload family members
+                const membersData = await graphqlRequest(GET_FAMILY_MEMBERS, {}, token)
+                if (membersData && membersData.familyMembers) {
+                  const members = membersData.familyMembers.map((m: any) => ({
+                    id: m.id,
+                    name: m.name || '',
+                    relationship: m.relationship || 'Family Member'
+                  }))
+                  setFamilyMembers(members)
+                  setSelectedMember(targetMemberId)
+                }
+              } catch (createError: any) {
+                console.error('Error creating default member:', createError)
+                rejected.push({
+                  id: `file-${Date.now()}-${index}`,
+                  name: file.name,
+                  size: formatFileSize(file.size),
+                  type: file.type,
+                  category: 'general',
+                  uploadDate: new Date().toISOString().split('T')[0],
+                  familyMemberId: '',
+                  familyMemberName: '',
+                  description: '',
+                  tags: [],
+                  medicalScore: validation.accuracyScore,
+                  matchedTerms: validation.matchedTerms || [],
+                  uploaded: false,
+                  rejectionReason: 'Could not determine patient name from report and failed to create member',
+                  url: ''
+                })
+                continue
+              }
             }
           }
 
@@ -476,6 +585,15 @@ export default function UploadReports() {
           }
         } catch (fileError: any) {
           console.error(`Error processing file ${file.name}:`, fileError)
+          // Try to extract patient name for display
+          let patientName = 'Unknown Patient'
+          try {
+            const extractedText = fileError.fileInfo?.extractedText || ''
+            patientName = extractPatientName(extractedText) || patientName
+          } catch (e) {
+            // Ignore extraction errors
+          }
+          
           rejected.push({
             id: `file-${Date.now()}-${index}`,
             name: file.name,
@@ -483,8 +601,8 @@ export default function UploadReports() {
             type: file.type,
             category: 'general',
             uploadDate: new Date().toISOString().split('T')[0],
-            familyMemberId: selectedMember,
-            familyMemberName: familyMembers.find(m => m.id === selectedMember)?.name || '',
+            familyMemberId: '',
+            familyMemberName: patientName,
             description: '',
             tags: [],
             medicalScore: 0,
@@ -562,31 +680,48 @@ export default function UploadReports() {
         </motion.div>
 
         <div className="max-w-4xl mx-auto space-y-6">
-          <div className="bg-white rounded-2xl p-6 shadow-lg">
-            <h3 className="text-lg font-bold text-gray-900 mb-4 flex items-center space-x-2">
-              <User className="w-5 h-5 text-primary-600" />
-              <span>Who are these reports for?</span>
-            </h3>
-            <div className="grid grid-cols-2 gap-3">
-              {familyMembers.map((member) => (
-                <button
-                  key={member.id}
-                  type="button"
-                  onClick={() => setSelectedMember(member.id)}
-                  className={`p-3 rounded-xl border-2 transition-all ${
-                    selectedMember === member.id
-                      ? 'border-primary-500 bg-primary-50 text-primary-700'
-                      : 'border-gray-200 hover:border-primary-300 hover:bg-primary-50'
-                  }`}
-                >
-                  <div className="text-center">
-                    <div className="text-base font-semibold">{member.name}</div>
-                    <div className="text-sm text-gray-500">{member.relationship}</div>
-                  </div>
-                </button>
-              ))}
+          {familyMembers.length > 0 && (
+            <div className="bg-white rounded-2xl p-6 shadow-lg">
+              <h3 className="text-lg font-bold text-gray-900 mb-4 flex items-center space-x-2">
+                <User className="w-5 h-5 text-primary-600" />
+                <span>Who are these reports for? (Optional - will auto-detect from report)</span>
+              </h3>
+              <div className="grid grid-cols-2 gap-3">
+                {familyMembers.map((member) => (
+                  <button
+                    key={member.id}
+                    type="button"
+                    onClick={() => setSelectedMember(member.id)}
+                    className={`p-3 rounded-xl border-2 transition-all ${
+                      selectedMember === member.id
+                        ? 'border-primary-500 bg-primary-50 text-primary-700'
+                        : 'border-gray-200 hover:border-primary-300 hover:bg-primary-50'
+                    }`}
+                  >
+                    <div className="text-center">
+                      <div className="text-base font-semibold">{member.name}</div>
+                      <div className="text-sm text-gray-500">{member.relationship}</div>
+                    </div>
+                  </button>
+                ))}
+              </div>
+              <p className="text-sm text-gray-500 mt-3">
+                💡 Tip: Leave unselected to automatically create a family member from the report's patient information
+              </p>
             </div>
-          </div>
+          )}
+          
+          {familyMembers.length === 0 && (
+            <div className="bg-blue-50 border border-blue-200 rounded-2xl p-6 shadow-lg">
+              <h3 className="text-lg font-bold text-gray-900 mb-2 flex items-center space-x-2">
+                <User className="w-5 h-5 text-primary-600" />
+                <span>No Family Members Yet</span>
+              </h3>
+              <p className="text-gray-700">
+                Don't worry! When you upload a medical report, we'll automatically create a family member based on the patient information found in the report.
+              </p>
+            </div>
+          )}
 
           <div className="bg-white rounded-2xl p-6 shadow-lg">
             <h3 className="text-lg font-bold text-gray-900 mb-4 flex items-center space-x-2">
@@ -699,41 +834,9 @@ export default function UploadReports() {
         <AddFamilyMemberModal
           isOpen={showAddMemberModal}
           onClose={async () => {
-            // If user closes without confirming, proceed with the selected member
-            if (pendingFileData && selectedMember) {
-              try {
-                const memberName = familyMembers.find(m => m.id === selectedMember)?.name || 'Selected Member'
-                await processFileUpload(
-                  pendingFileData.file,
-                  pendingFileData.fileInfo,
-                  pendingFileData.validation,
-                  pendingFileData.index,
-                  selectedMember,
-                  memberName
-                )
-                console.log(`✅ Uploaded report using selected member: ${memberName}`)
-              } catch (error: any) {
-                console.error('Error uploading report with selected member:', error)
-                const rejectedFile: UploadedFile = {
-                  id: `file-${Date.now()}-${pendingFileData.index}`,
-                  name: pendingFileData.file.name,
-                  size: formatFileSize(pendingFileData.file.size),
-                  type: pendingFileData.file.type,
-                  category: 'general',
-                  uploadDate: new Date().toISOString().split('T')[0],
-                  familyMemberId: selectedMember,
-                  familyMemberName: familyMembers.find(m => m.id === selectedMember)?.name || '',
-                  description: '',
-                  tags: [],
-                  medicalScore: pendingFileData.validation.accuracyScore,
-                  matchedTerms: pendingFileData.validation.matchedTerms || [],
-                  uploaded: false,
-                  rejectionReason: `Failed to save report: ${error.message || 'Unknown error'}`,
-                  url: ''
-                }
-                setUploadedFiles(prev => [...prev, rejectedFile])
-              }
-            }
+            // If user closes without confirming, cancel the upload
+            // Don't proceed without explicit confirmation to add the member
+            console.log('User cancelled adding family member. Upload cancelled.')
             setShowAddMemberModal(false)
             setPendingFileData(null)
           }}

@@ -30,9 +30,6 @@ interface Symptom {
   id: string
   name: string
   category: string
-  severity: 'mild' | 'moderate' | 'severe'
-  duration: string
-  frequency: string
   description?: string
 }
 
@@ -165,10 +162,7 @@ export default function SymptomChecker() {
           symptoms: symptoms.map((s: any, idx: number) => ({
             id: idx.toString(),
             name: s.name || 'Unknown',
-            category: s.category || 'General',
-            severity: s.severity || 'mild' as const,
-            duration: s.duration || 'Unknown',
-            frequency: s.frequency || 'Unknown'
+            category: s.category || 'General'
           })),
           possibleConditions: conditions.map((cond: any) => ({
             name: cond.name || 'Unknown Condition',
@@ -192,27 +186,26 @@ export default function SymptomChecker() {
     }
   }
 
-  const addSymptom = (symptom: CommonSymptom) => {
-    const newSymptom: Symptom = {
-      id: Date.now().toString(),
-      name: symptom.name,
-      category: symptom.category,
-      severity: 'mild',
-      duration: '1 day',
-      frequency: 'intermittent'
+  const toggleSymptom = (symptom: CommonSymptom) => {
+    const isSelected = selectedSymptoms.some(s => s.name === symptom.name)
+    if (isSelected) {
+      // Remove symptom
+      setSelectedSymptoms(selectedSymptoms.filter(s => s.name !== symptom.name))
+    } else {
+      // Add symptom
+      const newSymptom: Symptom = {
+        id: Date.now().toString() + Math.random(),
+        name: symptom.name,
+        category: symptom.category
+      }
+      setSelectedSymptoms([...selectedSymptoms, newSymptom])
     }
-    setSelectedSymptoms([...selectedSymptoms, newSymptom])
   }
 
   const removeSymptom = (symptomId: string) => {
     setSelectedSymptoms(selectedSymptoms.filter(s => s.id !== symptomId))
   }
 
-  const updateSymptom = (symptomId: string, updates: Partial<Symptom>) => {
-    setSelectedSymptoms(selectedSymptoms.map(s => 
-      s.id === symptomId ? { ...s, ...updates } : s
-    ))
-  }
 
   const analyzeSymptoms = async () => {
     if (!user) return
@@ -230,13 +223,10 @@ export default function SymptomChecker() {
         throw new Error('No authentication token available')
       }
       
-      // Prepare symptoms data for GraphQL
+      // Prepare symptoms data for GraphQL (simplified - no severity/duration/frequency)
       const symptomsData = selectedSymptoms.map(s => ({
         name: s.name,
-        category: s.category,
-        severity: s.severity,
-        duration: s.duration,
-        frequency: s.frequency
+        category: s.category
       }))
       
       const data = await graphqlRequest(ANALYZE_SYMPTOMS, { 
@@ -251,17 +241,45 @@ export default function SymptomChecker() {
       const conditions = result.conditions || []
       const symptoms = Array.isArray(result.symptoms) ? result.symptoms : symptomsData
       
+      // Parse conditions from backend response
+      let parsedConditions = []
+      if (Array.isArray(conditions) && conditions.length > 0) {
+        parsedConditions = conditions.map((cond: any) => ({
+          name: cond.name || cond || 'Unknown Condition',
+          probability: typeof cond === 'object' ? (cond.probability || 50) : 50,
+          description: typeof cond === 'object' ? (cond.description || '') : '',
+          urgency: typeof cond === 'object' ? (cond.urgency || 'medium') : 'medium',
+          recommendations: typeof cond === 'object' ? (cond.recommendations || []) : []
+        }))
+      } else if (typeof conditions === 'object' && conditions !== null) {
+        // Handle object format
+        parsedConditions = Object.entries(conditions).map(([name, data]: [string, any]) => ({
+          name: name,
+          probability: data?.probability || 50,
+          description: data?.description || '',
+          urgency: data?.urgency || 'medium',
+          recommendations: data?.recommendations || []
+        }))
+      }
+
       const formattedAnalysis: SymptomAnalysis = {
         id: result.id,
         symptoms: selectedSymptoms,
-        possibleConditions: Array.isArray(conditions) ? conditions.map((cond: any) => ({
-          name: cond.name || 'Unknown Condition',
-          probability: cond.probability || 50,
-          description: cond.description || '',
-          urgency: cond.urgency || 'medium' as const,
-          recommendations: cond.recommendations || []
-        })) : [],
-        generalRecommendations: analysisData.recommendations || [
+        possibleConditions: parsedConditions.length > 0 ? parsedConditions : [
+          {
+            name: 'General Assessment',
+            probability: 50,
+            description: 'Based on your symptoms, please consult with a healthcare professional for accurate diagnosis.',
+            urgency: result.urgencyLevel || 'medium',
+            recommendations: analysisData.recommendations || [
+              'Get adequate rest',
+              'Stay hydrated',
+              'Monitor symptoms for changes',
+              'Seek medical attention if symptoms persist or worsen'
+            ]
+          }
+        ],
+        generalRecommendations: analysisData.recommendations || analysisData.generalRecommendations || [
           'Get adequate rest',
           'Stay hydrated',
           'Monitor symptoms for changes',
@@ -276,8 +294,11 @@ export default function SymptomChecker() {
       setAnalysis(formattedAnalysis)
       setAnalysisHistory([formattedAnalysis, ...analysisHistory])
       
-      // Clear selected symptoms after analysis
-      setSelectedSymptoms([])
+      // Switch to analysis tab to show results
+      setActiveTab('analysis')
+      
+      // Scroll to top to show results
+      window.scrollTo({ top: 0, behavior: 'smooth' })
       
     } catch (error) {
       console.error('Error analyzing symptoms:', error)
@@ -330,6 +351,7 @@ export default function SymptomChecker() {
   }
 
   const filteredSymptoms = commonSymptoms.filter(symptom =>
+    searchTerm === '' ||
     symptom.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
     symptom.category.toLowerCase().includes(searchTerm.toLowerCase())
   )
@@ -410,85 +432,10 @@ export default function SymptomChecker() {
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.6, delay: 0.2 }}
-              className="space-y-6"
+              className="space-y-4"
             >
-              {/* Selected Symptoms */}
-              {selectedSymptoms.length > 0 && (
-                <div className="bg-white rounded-2xl p-6 shadow-lg">
-                  <h3 className="text-base font-semibold text-gray-900 mb-4">Selected Symptoms</h3>
-                  <div className="space-y-3">
-                    {selectedSymptoms.map((symptom, index) => (
-                      <motion.div
-                        key={symptom.id}
-                        initial={{ opacity: 0, x: -20 }}
-                        animate={{ opacity: 1, x: 0 }}
-                        transition={{ duration: 0.3, delay: index * 0.1 }}
-                        className="flex items-center justify-between p-4 bg-gray-50 rounded-lg"
-                      >
-                        <div className="flex-1">
-                          <div className="flex items-center space-x-3 mb-2">
-                            <h4 className="font-medium text-gray-900">{symptom.name}</h4>
-                            <span className="px-2 py-1 bg-blue-100 text-blue-800 text-xs rounded-full">
-                              {symptom.category}
-                            </span>
-                          </div>
-                          <div className="grid grid-cols-3 gap-4">
-                            <div>
-                              <label className="text-xs text-gray-500">Severity</label>
-                              <select 
-                                value={symptom.severity}
-                                onChange={(e) => updateSymptom(symptom.id, { severity: e.target.value as any })}
-                                className="w-full text-sm border rounded px-2 py-1"
-                              >
-                                <option value="mild">Mild</option>
-                                <option value="moderate">Moderate</option>
-                                <option value="severe">Severe</option>
-                              </select>
-                            </div>
-                            <div>
-                              <label className="text-xs text-gray-500">Duration</label>
-                              <select 
-                                value={symptom.duration}
-                                onChange={(e) => updateSymptom(symptom.id, { duration: e.target.value })}
-                                className="w-full text-sm border rounded px-2 py-1"
-                              >
-                                <option value="< 1 hour">Less than 1 hour</option>
-                                <option value="1-6 hours">1-6 hours</option>
-                                <option value="1 day">1 day</option>
-                                <option value="2-3 days">2-3 days</option>
-                                <option value="1 week">1 week</option>
-                                <option value="> 1 week">More than 1 week</option>
-                              </select>
-                            </div>
-                            <div>
-                              <label className="text-xs text-gray-500">Frequency</label>
-                              <select 
-                                value={symptom.frequency}
-                                onChange={(e) => updateSymptom(symptom.id, { frequency: e.target.value })}
-                                className="w-full text-sm border rounded px-2 py-1"
-                              >
-                                <option value="continuous">Continuous</option>
-                                <option value="intermittent">Intermittent</option>
-                                <option value="occasional">Occasional</option>
-                                <option value="rare">Rare</option>
-                              </select>
-                            </div>
-                          </div>
-                        </div>
-                        <button 
-                          onClick={() => removeSymptom(symptom.id)}
-                          className="ml-4 p-2 text-gray-400 hover:text-red-600 transition-colors"
-                        >
-                          <X className="w-4 h-4" />
-                        </button>
-                      </motion.div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Symptom Search */}
-              <div className="bg-white rounded-2xl p-6 shadow-lg">
+              {/* Symptom Search and Selector - Above */}
+              <div className="bg-white rounded-xl p-4 shadow-sm border border-gray-200">
                 <div className="flex items-center space-x-3 mb-4">
                   <Search className="w-5 h-5 text-gray-400" />
                   <input
@@ -496,40 +443,69 @@ export default function SymptomChecker() {
                     placeholder="Search symptoms..."
                     value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}
-                    className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500"
+                    className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
                   />
                 </div>
 
-                <div className="grid grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-2">
+                <div className="grid grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-2 max-h-[400px] overflow-y-auto">
                   {filteredSymptoms.map((symptom, index) => {
                     const isSelected = selectedSymptoms.some(s => s.name === symptom.name)
+                    const Icon = symptom.icon
                     
                     return (
-                      <motion.button
+                      <button
                         key={symptom.id}
-                        initial={{ opacity: 0, scale: 0.9 }}
-                        animate={{ opacity: 1, scale: 1 }}
-                        transition={{ duration: 0.3, delay: index * 0.05 }}
-                        onClick={() => addSymptom(symptom)}
-                        disabled={isSelected}
-                        className={`p-3 rounded-lg border-2 transition-all ${
+                        onClick={() => toggleSymptom(symptom)}
+                        className={`p-2.5 rounded-lg border transition-all ${
                           isSelected 
-                            ? 'bg-primary-100 border-primary-300 text-primary-700' 
-                            : 'bg-white border-gray-200 hover:border-primary-300 hover:bg-primary-50'
+                            ? 'bg-primary-500 border-primary-600 text-white shadow-sm' 
+                            : 'bg-white border-gray-200 hover:border-primary-400 hover:bg-primary-50'
                         }`}
                       >
-                        <div className="flex flex-col items-center justify-center h-full">
-                          {symptom.icon === Thermometer && <Thermometer className="w-4 h-4 mb-1 text-gray-600" />}
-                          {symptom.icon === Activity && <Activity className="w-4 h-4 mb-1 text-gray-600" />}
-                          {symptom.icon === Heart && <Heart className="w-4 h-4 mb-1 text-gray-600" />}
-                          {symptom.icon === Eye && <Eye className="w-4 h-4 mb-1 text-gray-600" />}
-                          <p className="text-sm font-medium text-center text-gray-900">{symptom.name}</p>
+                        <div className="flex flex-col items-center justify-center">
+                          <Icon className={`w-4 h-4 mb-1 ${isSelected ? 'text-white' : 'text-gray-600'}`} />
+                          <p className={`text-xs font-medium text-center ${isSelected ? 'text-white' : 'text-gray-700'}`}>
+                            {symptom.name}
+                          </p>
                         </div>
-                      </motion.button>
+                      </button>
                     )
                   })}
                 </div>
               </div>
+
+              {/* Selected Symptoms - Below */}
+              {selectedSymptoms.length > 0 && (
+                <div className="bg-white rounded-xl p-4 shadow-sm border border-gray-200">
+                  <div className="flex items-center justify-between mb-3">
+                    <h3 className="text-sm font-semibold text-gray-700">
+                      Selected Symptoms ({selectedSymptoms.length})
+                    </h3>
+                    <button
+                      onClick={() => setSelectedSymptoms([])}
+                      className="text-xs text-gray-500 hover:text-red-600 transition-colors"
+                    >
+                      Clear All
+                    </button>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {selectedSymptoms.map((symptom) => (
+                      <div
+                        key={symptom.id}
+                        className="inline-flex items-center space-x-1.5 px-3 py-1.5 bg-primary-50 border border-primary-200 text-primary-700 rounded-lg text-sm"
+                      >
+                        <span>{symptom.name}</span>
+                        <button
+                          onClick={() => removeSymptom(symptom.id)}
+                          className="hover:text-red-600 transition-colors ml-1"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </motion.div>
           )}
 
@@ -559,7 +535,7 @@ export default function SymptomChecker() {
                     <ul className="space-y-1">
                       {analysis.symptoms.map((symptom, idx) => (
                         <li key={idx} className="text-sm text-gray-600">
-                          • {symptom.name} ({symptom.severity})
+                          • {symptom.name}
                         </li>
                       ))}
                     </ul>
