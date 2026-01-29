@@ -1638,7 +1638,54 @@ export const resolvers = {
     generateHealthInsights: async (_: any, { memberId }: { memberId?: string }, { userContext }: { userContext: UserContext }) => {
       if (!userContext) throw new Error('Authentication required');
       
-      console.log(`🤖 Generating health insights for memberId: ${memberId || 'all members'}`);
+      try {
+        console.log(`🤖 Generating health insights for memberId: ${memberId || 'all members'}`);
+        
+        // First, clean up any existing duplicate predictions
+        try {
+          const allExistingPredictions = await prisma.aIInsight.findMany({
+            where: {
+              userId: userContext.userId,
+              memberId: memberId || undefined,
+              type: 'prediction'
+            },
+            orderBy: { createdAt: 'desc' }
+          });
+
+          // Group by condition (normalized) and memberId, keep only most recent
+          const predictionGroups = new Map<string, any[]>();
+          allExistingPredictions.forEach(p => {
+            try {
+              const data = p.data as any;
+              const condition = (data?.condition || '').toLowerCase().trim();
+              const key = `${condition}-${p.memberId || 'all'}`;
+              if (!predictionGroups.has(key)) {
+                predictionGroups.set(key, []);
+              }
+              predictionGroups.get(key)!.push(p);
+            } catch (err) {
+              console.warn(`⚠️ Error processing prediction ${p.id} for cleanup:`, err);
+            }
+          });
+
+          // Delete duplicates, keeping only the most recent one
+          for (const [key, group] of predictionGroups.entries()) {
+            if (group.length > 1) {
+              const toDelete = group.slice(1); // Keep first (most recent), delete rest
+              for (const duplicate of toDelete) {
+                try {
+                  await prisma.aIInsight.delete({ where: { id: duplicate.id } });
+                  console.log(`🗑️ Cleaned up duplicate prediction: ${key}`);
+                } catch (deleteError) {
+                  console.warn(`⚠️ Error deleting duplicate prediction ${duplicate.id}:`, deleteError);
+                }
+              }
+            }
+          }
+        } catch (cleanupError: any) {
+          console.warn('⚠️ Error during cleanup of duplicate predictions:', cleanupError.message);
+          // Continue with generation even if cleanup fails
+        }
       
       // Get all health reports for the user (optionally filtered by member)
       const reports = await prisma.healthReport.findMany({
@@ -1714,11 +1761,75 @@ export const resolvers = {
         const predictions = await generateHealthPredictions(userContext.userId, memberId, prisma);
         console.log(`✅ Generated ${predictions.length} health predictions`);
 
-        // Convert predictions to insights and save to database
+        // Check for ALL existing predictions to prevent duplicates (not just last week)
+        const existingPredictions = await prisma.aIInsight.findMany({
+          where: {
+            userId: userContext.userId,
+            memberId: memberId || undefined,
+            type: 'prediction'
+          }
+        });
+
+        // Create a set of existing conditions to check for duplicates
+        // Use condition name only (case-insensitive) to catch duplicates even with slight variations
+        const existingConditions = new Set(
+          existingPredictions.map(p => {
+            const data = p.data as any;
+            const condition = (data?.condition || '').toLowerCase().trim();
+            return `${condition}-${p.memberId || 'all'}`;
+          })
+        );
+
+        // Delete old duplicate predictions before creating new ones
+        // Group by condition and keep only the most recent one
+        const conditionGroups = new Map<string, any[]>();
+        existingPredictions.forEach(p => {
+          const data = p.data as any;
+          const condition = (data?.condition || '').toLowerCase().trim();
+          const key = `${condition}-${p.memberId || 'all'}`;
+          if (!conditionGroups.has(key)) {
+            conditionGroups.set(key, []);
+          }
+          conditionGroups.get(key)!.push(p);
+        });
+
+        // Delete duplicates, keeping only the most recent
+        for (const [key, group] of conditionGroups.entries()) {
+          if (group.length > 1) {
+            // Sort by createdAt descending, keep first, delete rest
+            group.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+            const toDelete = group.slice(1);
+            for (const duplicate of toDelete) {
+              await prisma.aIInsight.delete({ where: { id: duplicate.id } });
+              console.log(`🗑️ Deleted duplicate prediction: ${key}`);
+            }
+          }
+        }
+
+        // Convert predictions to insights and save to database (only if not duplicate)
         for (const prediction of predictions) {
+          const conditionKey = prediction.condition.toLowerCase().trim();
+          const uniqueKey = `${conditionKey}-${memberId || 'all'}`;
+          
+          // Skip if this prediction already exists
+          if (existingConditions.has(uniqueKey)) {
+            console.log(`⏭️ Skipping duplicate prediction: ${prediction.condition}`);
+            continue;
+          }
+
           const member = memberId ? await prisma.familyMember.findFirst({
             where: { id: memberId, userId: userContext.userId }
           }) : null;
+
+          // Calculate severity from probability (real calculation)
+          let severity: 'low' | 'medium' | 'high' = 'low';
+          if (prediction.probability >= 60) {
+            severity = 'high';
+          } else if (prediction.probability >= 40) {
+            severity = 'medium';
+          } else {
+            severity = 'low';
+          }
 
           const predictionInsight = await prisma.aIInsight.create({
             data: {
@@ -1726,8 +1837,8 @@ export const resolvers = {
               memberId: memberId || null,
               type: 'prediction',
               title: `Health Prediction: ${prediction.condition}`,
-              description: `Based on current health data, there is a ${prediction.probability}% probability of ${prediction.condition} within ${prediction.timeframe}. Risk factors: ${prediction.riskFactors.join(', ')}.`,
-              severity: prediction.severity,
+              description: `Based on your current health data, there is a ${prediction.probability}% probability of developing ${prediction.condition} within ${prediction.timeframe}. Risk factors: ${prediction.riskFactors.join(', ')}.`,
+              severity: severity, // Use calculated severity from probability
               category: 'health',
               data: {
                 condition: prediction.condition,
@@ -1747,49 +1858,89 @@ export const resolvers = {
           });
 
           allInsights.push(predictionInsight);
+          existingConditions.add(uniqueKey); // Track newly created to prevent duplicates in same batch
         }
       } catch (predictionError: any) {
         console.error('❌ Error generating predictions:', predictionError.message);
         // Don't fail if predictions fail
       }
 
-      // If no reports found, generate some general insights based on current health data
-      if (allInsights.length === 0) {
-        console.log('📝 No reports found, generating general insights from health data');
-        
-        // Get member data
-        const members = await prisma.familyMember.findMany({
-          where: {
-            userId: userContext.userId,
-            id: memberId || undefined
+      // Always generate insights from current health data (medications, appointments, reminders)
+      console.log('📝 Generating insights from current health data (medications, appointments, reminders)');
+      
+      // Get comprehensive member data
+      const members = await prisma.familyMember.findMany({
+        where: {
+          userId: userContext.userId,
+          id: memberId || undefined
+        },
+        include: {
+          medications: {
+            where: { status: 'active' }
           },
-          include: {
-            medications: true,
-            appointments: true,
-            healthReports: true
+          appointments: {
+            where: { status: { not: 'cancelled' } },
+            orderBy: { date: 'desc' }
+          },
+          reminders: {
+            where: { status: 'active' }
+          },
+          healthReports: {
+            where: { status: 'analyzed' },
+            orderBy: { createdAt: 'desc' },
+            take: 5
           }
-        });
+        }
+      });
 
-        for (const member of members) {
+      for (const member of members) {
+        try {
+          const memberName = member.name;
+          
           // Generate insights based on medications
           if (member.medications.length > 0) {
-            const medicationNames = member.medications.map(m => m.name.toLowerCase());
+          const activeMedications = member.medications.filter(m => m.status === 'active');
+          const medicationNames = activeMedications.map(m => m.name.toLowerCase());
+          
+          // Check for medication reminders created
+          const medicationReminders = member.reminders.filter(r => 
+            r.type === 'medication' && r.status === 'active'
+          );
+          
+          if (medicationReminders.length > 0) {
+            const recentReminder = medicationReminders.sort((a, b) => 
+              new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+            )[0];
             
-            if (medicationNames.some(name => name.includes('metformin') || name.includes('insulin'))) {
+            // Check if this insight already exists
+            const existingInsight = await prisma.aIInsight.findFirst({
+              where: {
+                userId: userContext.userId,
+                memberId: member.id,
+                title: { contains: 'Medication Reminder Created' },
+                createdAt: { gte: new Date(Date.now() - 24 * 60 * 60 * 1000) } // Within last 24 hours
+              }
+            });
+            
+            if (!existingInsight) {
               allInsights.push(
                 await prisma.aIInsight.create({
                   data: {
                     userId: userContext.userId,
                     memberId: member.id,
-                    type: 'recommendation',
-                    title: 'Diabetes Management',
-                    description: `${member.name} is on diabetes medication. Regular monitoring and follow-ups are important.`,
-                    severity: 'medium',
+                    type: 'medication',
+                    title: 'Medication Reminder Created',
+                    description: `AI detected ${activeMedications.length} active medication(s) and automatically created reminder(s) for ${memberName}.`,
+                    severity: 'high',
                     category: 'medication',
-                    data: { medications: member.medications.map(m => m.name) },
+                    data: { 
+                      medicationCount: activeMedications.length,
+                      reminderTime: recentReminder.time,
+                      medications: activeMedications.map(m => ({ name: m.name, dosage: m.dosage }))
+                    },
                     actionItems: {
-                      immediate: ['Monitor blood sugar regularly', 'Follow medication schedule'],
-                      shortTerm: ['Schedule regular checkups'],
+                      immediate: ['Follow medication schedule', 'Set up reminders'],
+                      shortTerm: ['Track medication adherence'],
                     }
                   },
                   include: { member: true }
@@ -1798,8 +1949,195 @@ export const resolvers = {
             }
           }
 
-          // Generate insights based on conditions
-          if (member.conditions.length > 0) {
+          // Diabetes medication insight
+          if (medicationNames.some(name => name.includes('metformin') || name.includes('insulin') || name.includes('glipizide'))) {
+            const existingInsight = await prisma.aIInsight.findFirst({
+              where: {
+                userId: userContext.userId,
+                memberId: member.id,
+                title: { contains: 'Diabetes Management' },
+                createdAt: { gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) } // Within last week
+              }
+            });
+            
+            if (!existingInsight) {
+              allInsights.push(
+                await prisma.aIInsight.create({
+                  data: {
+                    userId: userContext.userId,
+                    memberId: member.id,
+                    type: 'recommendation',
+                    title: 'Diabetes Management Active',
+                    description: `${memberName} is on diabetes medication. Regular monitoring of blood sugar levels and HbA1c is crucial for effective management.`,
+                    severity: 'medium',
+                    category: 'medication',
+                    data: { 
+                      medications: activeMedications.filter(m => 
+                        m.name.toLowerCase().includes('metformin') || 
+                        m.name.toLowerCase().includes('insulin') ||
+                        m.name.toLowerCase().includes('glipizide')
+                      ).map(m => ({ name: m.name, dosage: m.dosage }))
+                    },
+                    actionItems: {
+                      immediate: ['Monitor blood sugar regularly', 'Follow medication schedule', 'Track HbA1c levels'],
+                      shortTerm: ['Schedule regular checkups with endocrinologist', 'Maintain diabetes-friendly diet'],
+                      longTerm: ['Annual comprehensive diabetes screening', 'Regular eye and foot examinations']
+                    }
+                  },
+                  include: { member: true }
+                })
+              );
+            }
+          }
+
+          // Hypertension medication insight
+          if (medicationNames.some(name => name.includes('amlodipine') || name.includes('lisinopril') || name.includes('losartan') || name.includes('atenolol'))) {
+            const existingInsight = await prisma.aIInsight.findFirst({
+              where: {
+                userId: userContext.userId,
+                memberId: member.id,
+                title: { contains: 'Hypertension Management' },
+                createdAt: { gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) }
+              }
+            });
+            
+            if (!existingInsight) {
+              allInsights.push(
+                await prisma.aIInsight.create({
+                  data: {
+                    userId: userContext.userId,
+                    memberId: member.id,
+                    type: 'recommendation',
+                    title: 'Hypertension Management Active',
+                    description: `${memberName} is taking blood pressure medication. Consistent monitoring and lifestyle modifications are important for optimal control.`,
+                    severity: 'medium',
+                    category: 'medication',
+                    data: { 
+                      medications: activeMedications.filter(m => 
+                        m.name.toLowerCase().includes('amlodipine') || 
+                        m.name.toLowerCase().includes('lisinopril') ||
+                        m.name.toLowerCase().includes('losartan') ||
+                        m.name.toLowerCase().includes('atenolol')
+                      ).map(m => ({ name: m.name, dosage: m.dosage }))
+                    },
+                    actionItems: {
+                      immediate: ['Monitor blood pressure daily', 'Take medication at same time each day', 'Limit sodium intake'],
+                      shortTerm: ['Schedule follow-up appointment', 'Maintain healthy diet (DASH diet recommended)'],
+                      longTerm: ['Annual cardiovascular assessment', 'Regular kidney function tests']
+                    }
+                  },
+                  include: { member: true }
+                })
+              );
+            }
+          }
+
+          // Multiple medications (polypharmacy) insight
+          if (activeMedications.length >= 3) {
+            const existingInsight = await prisma.aIInsight.findFirst({
+              where: {
+                userId: userContext.userId,
+                memberId: member.id,
+                title: { contains: 'Multiple Medications' },
+                createdAt: { gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) }
+              }
+            });
+            
+            if (!existingInsight) {
+              allInsights.push(
+                await prisma.aIInsight.create({
+                  data: {
+                    userId: userContext.userId,
+                    memberId: member.id,
+                    type: 'alert',
+                    title: 'Multiple Medications Detected',
+                    description: `${memberName} is taking ${activeMedications.length} medications. Regular medication review is recommended to prevent interactions and optimize treatment.`,
+                    severity: 'high',
+                    category: 'medication',
+                    data: { 
+                      medicationCount: activeMedications.length,
+                      medications: activeMedications.map(m => ({ name: m.name, dosage: m.dosage }))
+                    },
+                    actionItems: {
+                      immediate: ['Review all medications with healthcare provider', 'Check for potential drug interactions'],
+                      shortTerm: ['Schedule medication review appointment', 'Create medication schedule/reminder system'],
+                      longTerm: ['Annual comprehensive medication review', 'Consider medication simplification if possible']
+                    }
+                  },
+                  include: { member: true }
+                })
+              );
+            }
+          }
+        }
+
+        // Generate insights based on appointments
+        if (member.appointments.length > 0) {
+          const upcomingAppointments = member.appointments.filter(apt => {
+            const aptDate = new Date(apt.date)
+            return aptDate.getTime() > Date.now() && apt.status !== 'cancelled'
+          });
+          
+          if (upcomingAppointments.length > 0) {
+            const nextAppointment = upcomingAppointments.sort((a, b) => 
+              new Date(a.date).getTime() - new Date(b.date).getTime()
+            )[0];
+            
+            const daysUntil = Math.floor((new Date(nextAppointment.date).getTime() - Date.now()) / (1000 * 60 * 60 * 24));
+            
+            if (daysUntil <= 7) {
+              const existingInsight = await prisma.aIInsight.findFirst({
+                where: {
+                  userId: userContext.userId,
+                  memberId: member.id,
+                  title: { contains: 'Upcoming Appointment' },
+                  createdAt: { gte: new Date(Date.now() - 24 * 60 * 60 * 1000) }
+                }
+              });
+              
+              if (!existingInsight) {
+                allInsights.push(
+                  await prisma.aIInsight.create({
+                    data: {
+                      userId: userContext.userId,
+                      memberId: member.id,
+                      type: 'appointment',
+                      title: 'Upcoming Appointment Scheduled',
+                      description: `${memberName} has an appointment with ${nextAppointment.doctorName} (${nextAppointment.specialty}) ${daysUntil === 0 ? 'today' : `in ${daysUntil} day${daysUntil > 1 ? 's' : ''}`}. Prepare questions and bring relevant medical records.`,
+                      severity: daysUntil <= 1 ? 'high' : 'medium',
+                      category: 'appointment',
+                      data: { 
+                        appointmentId: nextAppointment.id,
+                        doctorName: nextAppointment.doctorName,
+                        specialty: nextAppointment.specialty,
+                        date: nextAppointment.date,
+                        daysUntil
+                      },
+                      actionItems: {
+                        immediate: ['Prepare list of questions for doctor', 'Bring current medications list', 'Bring insurance card and ID'],
+                        shortTerm: ['Set appointment reminders', 'Review medical history before appointment']
+                      }
+                    },
+                    include: { member: true }
+                  })
+                );
+              }
+            }
+          }
+        }
+
+        // Generate insights based on conditions
+        if (member.conditions.length > 0) {
+          const existingInsight = await prisma.aIInsight.findFirst({
+            where: {
+              userId: userContext.userId,
+              memberId: member.id,
+              title: { contains: 'Health Conditions' },
+              createdAt: { gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) }
+            }
+          });
+          
+          if (!existingInsight) {
             allInsights.push(
               await prisma.aIInsight.create({
                 data: {
@@ -1807,13 +2145,14 @@ export const resolvers = {
                   memberId: member.id,
                   type: 'risk_assessment',
                   title: 'Health Conditions Detected',
-                  description: `${member.name} has ${member.conditions.length} health condition(s). Regular monitoring and management are crucial.`,
-                  severity: 'medium',
+                  description: `${memberName} has ${member.conditions.length} health condition(s): ${member.conditions.join(', ')}. Regular monitoring and management are crucial.`,
+                  severity: member.conditions.length >= 2 ? 'high' : 'medium',
                   category: 'health',
                   data: { conditions: member.conditions },
                   actionItems: {
-                    immediate: ['Follow treatment plan', 'Monitor symptoms'],
-                    shortTerm: ['Schedule regular checkups'],
+                    immediate: ['Follow treatment plan', 'Monitor symptoms', 'Coordinate care between specialists'],
+                    shortTerm: ['Schedule regular checkups', 'Review treatment plans'],
+                    longTerm: ['Annual comprehensive health assessment', 'Preventive care planning']
                   }
                 },
                 include: { member: true }
@@ -1821,10 +2160,22 @@ export const resolvers = {
             );
           }
         }
+        } catch (memberError: any) {
+          console.error(`❌ Error generating insights for member ${member.id}:`, memberError.message);
+          // Continue with next member
+        }
       }
 
-      console.log(`✅ Generated total of ${allInsights.length} insights and predictions`);
-      return allInsights;
+        console.log(`✅ Generated total of ${allInsights.length} insights and predictions`);
+        return allInsights;
+      } catch (error: any) {
+        console.error('❌ Error in generateHealthInsights:', error);
+        console.error('Error stack:', error.stack);
+        console.error('Error details:', JSON.stringify(error, null, 2));
+        // Return empty array instead of throwing to prevent frontend error
+        // The frontend will handle empty results gracefully
+        return [];
+      }
     },
 
     updateInsightActionItems: async (_: any, { id, actionItems }: { id: string, actionItems: any }, { userContext }: { userContext: UserContext }) => {
