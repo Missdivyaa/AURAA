@@ -2201,31 +2201,348 @@ export const resolvers = {
     analyzeSymptoms: async (_: any, { symptoms, memberId }: { symptoms: any, memberId?: string }, { userContext }: { userContext: UserContext }) => {
       if (!userContext) throw new Error('Authentication required');
       
-      // Mock symptom analysis
-      const analysis = {
-        possibleConditions: ['Common cold', 'Allergic reaction', 'Stress'],
-        urgencyLevel: 'low',
-        recommendations: ['Rest and hydration', 'Monitor symptoms', 'See doctor if symptoms worsen'],
-        analyzedAt: new Date().toISOString()
-      };
+      console.log('🔍 Analyzing symptoms with AI:', symptoms);
+      
+      try {
+        // Check for recent similar analysis in database (caching mechanism)
+        const symptomList = Array.isArray(symptoms) ? symptoms : [symptoms];
+        const symptomHash = JSON.stringify(symptomList.map((s: any) => ({
+          name: s.name?.toLowerCase().trim(),
+          severity: s.severity,
+          duration: s.duration
+        })).sort());
+        
+        // Look for recent analysis (within last 24 hours) with same symptoms
+        const recentAnalysis = await prisma.symptomAnalysis.findFirst({
+          where: {
+            userId: userContext.userId,
+            memberId: memberId || null,
+            createdAt: {
+              gte: new Date(Date.now() - 24 * 60 * 60 * 1000) // Last 24 hours
+            }
+          },
+          orderBy: {
+            createdAt: 'desc'
+          }
+        });
+        
+        // If recent analysis exists and symptoms match, return cached result
+        if (recentAnalysis) {
+          const recentSymptoms = JSON.stringify((recentAnalysis.symptoms as any[] || []).map((s: any) => ({
+            name: s.name?.toLowerCase().trim(),
+            severity: s.severity,
+            duration: s.duration
+          })).sort());
+          
+          if (recentSymptoms === symptomHash) {
+            console.log('✅ Returning cached symptom analysis');
+            return await prisma.symptomAnalysis.findUnique({
+              where: { id: recentAnalysis.id },
+              include: { member: true }
+            });
+          }
+        }
+        
+        // Get user's health context for better analysis
+        const member = memberId ? await prisma.familyMember.findFirst({
+          where: { id: memberId, userId: userContext.userId },
+          include: {
+            medications: { where: { status: 'active' } },
+            conditions: true
+          }
+        }) : null;
 
-      const conditions = {
-        primary: 'Common cold',
-        secondary: ['Allergic reaction'],
-        ruledOut: ['Serious infection']
-      };
+        // Prepare symptom data for AI analysis (already have symptomList from cache check)
+        const symptomText = symptomList.map((s: any) => {
+          const parts = [s.name];
+          if (s.severity) parts.push(`Severity: ${s.severity}`);
+          if (s.duration) parts.push(`Duration: ${s.duration}`);
+          if (s.frequency) parts.push(`Frequency: ${s.frequency}`);
+          return parts.join(', ');
+        }).join('; ');
 
-      return await prisma.symptomAnalysis.create({
-        data: {
-          userId: userContext.userId,
-          memberId: memberId || null,
-          symptoms,
-          analysis,
-          conditions,
-          urgencyLevel: 'low'
-        },
-        include: { member: true }
-      });
+        // Get user context for better analysis
+        const userContextInfo = member ? {
+          age: member.dob ? Math.floor((Date.now() - new Date(member.dob).getTime()) / (1000 * 60 * 60 * 24 * 365)) : null,
+          gender: member.gender,
+          medications: member.medications.map(m => m.name).join(', '),
+          conditions: member.conditions.join(', ')
+        } : {};
+
+        // Call OpenAI for real AI analysis
+        const openAiKey = process.env.OPENAI_API_KEY;
+        const openAiModel = process.env.OPENAI_MODEL || 'gpt-4o-mini';
+
+        if (!openAiKey) {
+          console.warn('⚠️ OPENAI_API_KEY not set, using fallback analysis');
+          // Fallback to basic analysis if OpenAI not available
+          return await createFallbackAnalysis(symptoms, userContext, memberId);
+        }
+
+        // Create comprehensive AI prompt leveraging OpenAI's medical training data
+        const prompt = `You are an advanced medical AI assistant trained on extensive medical literature, clinical data, symptom-disease associations, and evidence-based medicine. You have access to medical knowledge from textbooks, research papers, clinical guidelines, and real-world medical data. Analyze the following symptoms using your comprehensive medical training.
+
+SYMPTOMS PRESENTED:
+${symptomText}
+
+PATIENT CONTEXT:
+${userContextInfo.age ? `Age: ${userContextInfo.age} years` : 'Age: Not specified'}
+${userContextInfo.gender ? `Gender: ${userContextInfo.gender}` : 'Gender: Not specified'}
+${userContextInfo.medications ? `Current Medications: ${userContextInfo.medications}` : 'Medications: None specified'}
+${userContextInfo.conditions ? `Existing Conditions: ${userContextInfo.conditions}` : 'Conditions: None specified'}
+
+INSTRUCTIONS:
+Use your comprehensive medical training to analyze these symptoms. Draw from:
+- Medical textbooks and clinical guidelines
+- Evidence-based symptom-disease associations
+- Real-world clinical patterns and case studies
+- Medical research and peer-reviewed studies
+- Clinical decision support algorithms
+
+ANALYSIS REQUIREMENTS:
+1. Use your medical training to identify possible conditions based on symptom-disease associations from medical literature
+2. Consider symptom combinations and their clinical significance based on evidence-based medicine
+3. Calculate probability scores based on:
+   - How strongly symptoms match known disease patterns from medical databases
+   - Symptom combinations that are clinically significant per medical guidelines
+   - Age and gender factors where medically relevant
+   - Existing medical conditions and medications that may influence diagnosis
+   - Epidemiological data and prevalence rates
+4. Provide accurate, evidence-based assessments similar to clinical decision support systems used in healthcare
+
+Please provide a JSON response with the following structure:
+{
+  "overview": "A comprehensive overview explaining what the symptom/condition is, similar to Google's format. For example, if symptom is 'back pain', explain: 'Back pain, a common, often temporary issue, typically stems from muscle strains, poor posture, or injuries to the spine's muscles, ligaments, or discs.'",
+  "possibleConditions": [
+    {
+      "name": "Condition name (use standard medical terminology)",
+      "probability": 0-100,
+      "overview": "Brief overview of this condition",
+      "commonCauses": {
+        "strainsAndSprains": ["Cause 1", "Cause 2", ...],
+        "structuralIssues": ["Cause 1", "Cause 2", ...],
+        "lifestyleFactors": ["Factor 1", "Factor 2", ...],
+        "medicalConditions": ["Condition 1", "Condition 2", ...]
+      },
+      "description": "Detailed evidence-based explanation referencing symptom patterns and clinical associations",
+      "urgency": "low|medium|high",
+      "recommendations": ["Evidence-based recommendation 1", "recommendation 2", ...],
+      "whenToSeekHelp": "Specific guidance on when to seek medical attention for this condition"
+    }
+  ],
+  "urgencyLevel": "low|medium|high",
+  "generalRecommendations": ["general recommendation 1", ...],
+  "whenToSeekHelp": "When to seek immediate medical attention based on symptom severity"
+}
+
+CRITICAL REQUIREMENTS:
+- Provide a comprehensive OVERVIEW section explaining what the symptom/condition is (like Google does). For example, if symptom is "back pain", explain: "Back pain, a common, often temporary issue, typically stems from muscle strains, poor posture, or injuries to the spine's muscles, ligaments, or discs."
+- For each condition, include COMMON CAUSES broken down into categories with SPECIFIC EXAMPLES:
+  * Strains and Sprains: List specific causes like "Improper lifting, twisting, or sudden movements that damage muscles or ligaments"
+  * Structural Issues: List specific anatomical problems like "Herniated (ruptured) discs, bulging discs, spinal stenosis"
+  * Lifestyle Factors: List specific factors like "Sedentary behavior, poor ergonomics, obesity"
+  * Medical Conditions: List specific conditions like "Osteoporosis, infections, inflammation"
+- Provide ACTIONABLE RECOMMENDATIONS - what the user should actually DO (not just "consult a doctor")
+- Include specific "When to Seek Help" guidance with clear criteria
+- AVOID REPETITIVE GENERIC ADVICE - each recommendation should be unique and specific
+- Base analysis on medical training data patterns, not generic assumptions
+- Use symptom-disease associations similar to clinical diagnostic algorithms
+- Consider how symptoms typically present together in medical literature
+- Provide probability scores that reflect actual clinical likelihood
+- Reference specific symptom patterns that support each diagnosis
+- Be precise and evidence-based, similar to how medical AI models are trained
+- Make the information detailed, informative, and useful - similar to what users see when searching symptoms on Google
+- DO NOT repeat the same generic advice multiple times - provide diverse, specific recommendations
+
+Return ONLY valid JSON, no additional text.`;
+
+        // Retry logic with exponential backoff for rate limiting
+        const maxRetries = 3;
+        let retryCount = 0;
+        let aiResponse: Response | null = null;
+        let lastError: Error | null = null;
+        
+        while (retryCount <= maxRetries) {
+          try {
+            aiResponse = await fetch('https://api.openai.com/v1/chat/completions', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${openAiKey}`
+              },
+              body: JSON.stringify({
+                model: openAiModel,
+                messages: [
+                  {
+                    role: 'system',
+                    content: 'You are an advanced medical AI assistant trained on extensive medical literature, clinical data, symptom-disease associations, and evidence-based medicine. You have access to medical knowledge from textbooks, research papers, clinical guidelines, and real-world medical data. You analyze symptoms using your comprehensive medical training - drawing from medical databases, clinical decision support systems, and evidence-based medicine. Always base your analysis on real medical training data patterns, not generic assumptions. Always respond with valid JSON only.'
+                  },
+                  {
+                    role: 'user',
+                    content: prompt
+                  }
+                ],
+                temperature: 0.3, // Slightly higher for more diverse, detailed responses
+                max_tokens: 2500 // Increased for more detailed responses
+              })
+            });
+            
+            // If successful, break out of retry loop
+            if (aiResponse.ok) {
+              break;
+            }
+            
+            // If rate limited (429), wait and retry
+            if (aiResponse.status === 429 && retryCount < maxRetries) {
+              const retryAfter = aiResponse.headers.get('Retry-After');
+              const waitTime = retryAfter 
+                ? parseInt(retryAfter) * 1000 
+                : Math.min(1000 * Math.pow(2, retryCount), 60000); // Exponential backoff, max 60s
+              
+              console.log(`⏳ Rate limit hit. Waiting ${waitTime/1000}s before retry ${retryCount + 1}/${maxRetries}...`);
+              await new Promise(resolve => setTimeout(resolve, waitTime));
+              retryCount++;
+              continue;
+            }
+            
+            // For other errors, break and handle below
+            break;
+            
+          } catch (fetchError: any) {
+            lastError = fetchError;
+            if (retryCount < maxRetries) {
+              const waitTime = Math.min(1000 * Math.pow(2, retryCount), 30000); // Exponential backoff, max 30s
+              console.log(`⏳ Request failed. Waiting ${waitTime/1000}s before retry ${retryCount + 1}/${maxRetries}...`);
+              await new Promise(resolve => setTimeout(resolve, waitTime));
+              retryCount++;
+            } else {
+              throw fetchError;
+            }
+          }
+        }
+        
+        if (!aiResponse) {
+          throw lastError || new Error('Failed to get response from OpenAI API');
+        }
+
+        if (!aiResponse.ok) {
+          const errorText = await aiResponse.text();
+          let errorMessage = '';
+          
+          try {
+            const errorData = JSON.parse(errorText);
+            errorMessage = errorData.error?.message || errorText;
+          } catch {
+            errorMessage = errorText;
+          }
+          
+          console.error('❌ OpenAI API error:', {
+            status: aiResponse.status,
+            statusText: aiResponse.statusText,
+            error: errorMessage
+          });
+          
+          // Handle different error types
+          if (aiResponse.status === 401) {
+            throw new Error('OpenAI API authentication failed. Please check your OPENAI_API_KEY.');
+          } else if (aiResponse.status === 429) {
+            throw new Error('OpenAI API rate limit exceeded. Please wait a moment and try again, or upgrade your OpenAI plan for higher rate limits.');
+          } else if (aiResponse.status === 500 || aiResponse.status === 502 || aiResponse.status === 503) {
+            throw new Error('OpenAI API service temporarily unavailable. Please try again in a few moments.');
+          } else {
+            throw new Error(`OpenAI API error (${aiResponse.status}): ${errorMessage || aiResponse.statusText}`);
+          }
+        }
+
+        const aiData = await aiResponse.json();
+        const aiContent = aiData.choices[0]?.message?.content || '{}';
+        
+        // Parse AI response
+        let aiAnalysis;
+        try {
+          // Clean the response (remove markdown code blocks if present)
+          const cleanedContent = aiContent.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+          aiAnalysis = JSON.parse(cleanedContent);
+        } catch (parseError) {
+          console.error('❌ Error parsing AI response:', parseError);
+          console.error('Raw AI response:', aiContent);
+          throw new Error(`Failed to parse AI response: ${parseError}. Please try again.`);
+        }
+
+        // Use AI analysis directly - fully AI-powered, no manual knowledge base
+        const enhancedConditions = (aiAnalysis.possibleConditions || []).map((aiCond: any) => ({
+          name: aiCond.name,
+          probability: aiCond.probability || 50,
+          overview: aiCond.overview || null,
+          commonCauses: aiCond.commonCauses || null,
+          description: aiCond.description || '',
+          urgency: aiCond.urgency || 'medium',
+          recommendations: aiCond.recommendations || [],
+          whenToSeekHelp: aiCond.whenToSeekHelp || null
+        }));
+        
+        // Sort by probability
+        enhancedConditions.sort((a: any, b: any) => b.probability - a.probability);
+        
+        const urgencyLevel = aiAnalysis.urgencyLevel || 
+          (enhancedConditions.length > 0 ? enhancedConditions[0].urgency : 'medium');
+
+        // Create comprehensive analysis object
+        const analysis = {
+          overview: aiAnalysis.overview || null,
+          possibleConditions: enhancedConditions,
+          urgencyLevel,
+          generalRecommendations: aiAnalysis.generalRecommendations || [],
+          whenToSeekHelp: aiAnalysis.whenToSeekHelp || 'If symptoms persist or worsen, consult a healthcare professional.',
+          analyzedAt: new Date().toISOString(),
+          aiModel: openAiModel,
+          confidence: 'high',
+          aiPowered: true,
+          medicalTrainingDataUsed: true
+        };
+
+        // Format conditions for database storage
+        const formattedConditions = enhancedConditions.map((c: any) => ({
+          name: c.name,
+          probability: c.probability || 50,
+          overview: c.overview || null,
+          commonCauses: c.commonCauses || null,
+          description: c.description || '',
+          urgency: c.urgency || 'medium',
+          recommendations: c.recommendations || [],
+          whenToSeekHelp: c.whenToSeekHelp || null
+        }));
+
+        console.log('✅ AI symptom analysis completed:', formattedConditions.length, 'conditions identified');
+
+        return await prisma.symptomAnalysis.create({
+          data: {
+            userId: userContext.userId,
+            memberId: memberId || null,
+            symptoms,
+            analysis,
+            conditions: formattedConditions,
+            urgencyLevel
+          },
+          include: { member: true }
+        });
+
+      } catch (error: any) {
+        console.error('❌ Error in AI symptom analysis:', error);
+        
+        // Re-throw with better context if it's already a formatted error
+        if (error.message && error.message.includes('OpenAI API')) {
+          throw error;
+        }
+        
+        // Handle missing API key specifically
+        if (error.message && error.message.includes('OPENAI_API_KEY')) {
+          throw new Error('AI symptom analysis requires OPENAI_API_KEY to be set in your environment variables. Please configure your OpenAI API key.');
+        }
+        
+        // Generic error fallback
+        throw new Error(`AI symptom analysis failed: ${error.message || 'Unknown error'}. Please check your OpenAI API configuration and try again.`);
+      }
     },
 
     // User Profile mutations
