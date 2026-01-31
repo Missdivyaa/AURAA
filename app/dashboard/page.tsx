@@ -22,7 +22,8 @@ import {
   AlertTriangle,
   X,
   RefreshCw,
-  LogOut
+  LogOut,
+  Phone
 } from 'lucide-react'
 import { FamilyMember } from '@/lib/client-data-service'
 import { graphqlRequest } from '@/lib/graphql-client'
@@ -754,7 +755,10 @@ function AddMemberModal({ isOpen, onClose, onSubmit }: { isOpen: boolean, onClos
     nextAppointment: '', medications: 0,
     conditions: '',
     allergies: '',
-    emergencyName: '', emergencyPhone: '', emergencyRelation: '',
+    // Primary contact (user's own contact)
+    primaryContactName: '', primaryContactPhone: '', primaryContactCountryCode: '+91',
+    // Relative contact
+    relativeContactName: '', relativeContactPhone: '', relativeContactRelation: '', relativeContactCountryCode: '+91',
     insuranceProvider: '', insurancePolicy: '',
     doctorName: '', doctorPhone: '', doctorSpecialty: ''
   })
@@ -784,13 +788,24 @@ function AddMemberModal({ isOpen, onClose, onSubmit }: { isOpen: boolean, onClos
     if (!user) return
     const email = (user.primaryEmailAddress || user.emailAddresses?.[0])?.emailAddress || form.email
     const phoneRaw = (user.primaryPhoneNumber || user.phoneNumbers?.[0])?.phoneNumber || ''
+    const userName = user.firstName || user.name || ''
     let countryCode = form.countryCode
     let phone = form.phone
+    let primaryContactCountryCode = form.primaryContactCountryCode
+    let primaryContactPhone = form.primaryContactPhone
 
     if (phoneRaw.startsWith('+91')) {
       countryCode = '+91'
       phone = phoneRaw.replace('+91', '')
+      primaryContactCountryCode = '+91'
+      primaryContactPhone = phoneRaw.replace('+91', '')
     } else if (phoneRaw.startsWith('+')) {
+      // Extract country code
+      const match = phoneRaw.match(/^(\+\d+)(.+)/)
+      if (match) {
+        primaryContactCountryCode = match[1]
+        primaryContactPhone = match[2]
+      }
       // Fallback: keep full phone in number field
       phone = phoneRaw
     }
@@ -800,6 +815,9 @@ function AddMemberModal({ isOpen, onClose, onSubmit }: { isOpen: boolean, onClos
       email,
       countryCode,
       phone,
+      primaryContactName: userName,
+      primaryContactPhone,
+      primaryContactCountryCode,
     })
   }
   
@@ -938,6 +956,124 @@ function AddMemberModal({ isOpen, onClose, onSubmit }: { isOpen: boolean, onClos
               ⚠️ Important for emergency situations - list all known allergies
             </p>
           </label>
+          
+          {/* Emergency Contacts Section */}
+          <div className="md:col-span-2 border-t pt-4 mt-4">
+            <h4 className="text-sm font-semibold text-gray-900 mb-3 flex items-center space-x-2">
+              <Phone className="w-4 h-4 text-green-600" />
+              <span>Emergency Contacts</span>
+            </h4>
+            <p className="text-xs text-gray-500 mb-4">Add your own contact and a relative's contact for emergency situations</p>
+            
+            {/* Primary Contact (User's Own Contact) */}
+            <div className="mb-4 p-3 bg-blue-50 rounded-lg border border-blue-200">
+              <label className="text-xs font-medium text-blue-900 mb-2 block">Primary Contact (Your Contact)</label>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                <input
+                  type="text"
+                  className="w-full px-3 py-2 border rounded-lg text-gray-900 text-sm"
+                  placeholder="Your name"
+                  value={form.primaryContactName}
+                  onChange={e => setForm({...form, primaryContactName: e.target.value})}
+                  onFocus={(e) => {
+                    if (e.target.value === 'Not provided' || e.target.value.toLowerCase().includes('not')) {
+                      e.target.value = ''
+                      setForm({...form, primaryContactName: ''})
+                    }
+                  }}
+                />
+                <div className="flex gap-2">
+                  <select
+                    className="w-20 px-2 py-2 border rounded-lg bg-white text-gray-900 text-sm"
+                    value={form.primaryContactCountryCode}
+                    onChange={e => setForm({ ...form, primaryContactCountryCode: e.target.value })}
+                  >
+                    {['+91','+1','+44','+61','+81','+971'].map(cc => (
+                      <option key={cc} value={cc}>{cc}</option>
+                    ))}
+                  </select>
+                  <input
+                    type="tel"
+                    className="flex-1 px-3 py-2 border rounded-lg text-gray-900 text-sm"
+                    placeholder="Your phone"
+                    value={form.primaryContactPhone}
+                    onChange={e => {
+                      // Only allow numbers and prevent appending to "Not provided"
+                      const value = e.target.value.replace(/[^\d]/g, '')
+                      setForm({...form, primaryContactPhone: value})
+                    }}
+                    onFocus={(e) => {
+                      if (e.target.value === 'Not provided' || e.target.value.toLowerCase().includes('not') || e.target.value === 'N/A') {
+                        e.target.value = ''
+                        setForm({...form, primaryContactPhone: ''})
+                      }
+                    }}
+                  />
+                </div>
+              </div>
+            </div>
+            
+            {/* Relative Contact */}
+            <div className="p-3 bg-green-50 rounded-lg border border-green-200">
+              <label className="text-xs font-medium text-green-900 mb-2 block">Relative Contact (To Inform Relatives)</label>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                <input
+                  type="text"
+                  className="w-full px-3 py-2 border rounded-lg text-gray-900 text-sm"
+                  placeholder="Relative name"
+                  value={form.relativeContactName}
+                  onChange={e => setForm({...form, relativeContactName: e.target.value})}
+                  onFocus={(e) => {
+                    if (e.target.value === 'Not provided' || e.target.value.toLowerCase().includes('not')) {
+                      e.target.value = ''
+                      setForm({...form, relativeContactName: ''})
+                    }
+                  }}
+                />
+                <input
+                  type="text"
+                  className="w-full px-3 py-2 border rounded-lg text-gray-900 text-sm"
+                  placeholder="Relationship (e.g., Spouse, Parent)"
+                  value={form.relativeContactRelation}
+                  onChange={e => setForm({...form, relativeContactRelation: e.target.value})}
+                  onFocus={(e) => {
+                    if (e.target.value === 'Not provided' || e.target.value === 'Please add contact' || e.target.value.toLowerCase().includes('not')) {
+                      e.target.value = ''
+                      setForm({...form, relativeContactRelation: ''})
+                    }
+                  }}
+                />
+                <div className="flex gap-2">
+                  <select
+                    className="w-20 px-2 py-2 border rounded-lg bg-white text-gray-900 text-sm"
+                    value={form.relativeContactCountryCode}
+                    onChange={e => setForm({ ...form, relativeContactCountryCode: e.target.value })}
+                  >
+                    {['+91','+1','+44','+61','+81','+971'].map(cc => (
+                      <option key={cc} value={cc}>{cc}</option>
+                    ))}
+                  </select>
+                  <input
+                    type="tel"
+                    className="flex-1 px-3 py-2 border rounded-lg text-gray-900 text-sm"
+                    placeholder="Relative phone"
+                    value={form.relativeContactPhone}
+                    onChange={e => {
+                      // Only allow numbers and prevent appending to "Not provided"
+                      const value = e.target.value.replace(/[^\d]/g, '')
+                      setForm({...form, relativeContactPhone: value})
+                    }}
+                    onFocus={(e) => {
+                      if (e.target.value === 'Not provided' || e.target.value.toLowerCase().includes('not') || e.target.value === 'N/A') {
+                        e.target.value = ''
+                        setForm({...form, relativeContactPhone: ''})
+                      }
+                    }}
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
         <div className="flex gap-3 justify-end">
           <button
@@ -970,9 +1106,22 @@ function AddMemberModal({ isOpen, onClose, onSubmit }: { isOpen: boolean, onClos
                 conditions: (form.conditions || '').split(',').map(s=>s.trim()).filter(Boolean),
                 allergies: (form.allergies || '').split(',').map(s=>s.trim()).filter(Boolean),
                 emergencyContacts: {
-                  name: form.emergencyName || '',
-                  phone: form.emergencyPhone || '',
-                  relationship: form.emergencyRelation || ''
+                  contacts: [
+                    // Primary contact (user's own contact)
+                    ...(form.primaryContactName && form.primaryContactPhone ? [{
+                      name: form.primaryContactName,
+                      phone: `${form.primaryContactCountryCode}${form.primaryContactPhone}`,
+                      relationship: 'Self',
+                      isPrimary: true
+                    }] : []),
+                    // Relative contact
+                    ...(form.relativeContactName && form.relativeContactPhone ? [{
+                      name: form.relativeContactName,
+                      phone: `${form.relativeContactCountryCode}${form.relativeContactPhone}`,
+                      relationship: form.relativeContactRelation || 'Relative',
+                      isPrimary: false
+                    }] : [])
+                  ]
                 },
                 insurance: {
                   provider: form.insuranceProvider || '',
@@ -1000,7 +1149,8 @@ function AddMemberModal({ isOpen, onClose, onSubmit }: { isOpen: boolean, onClos
                   nextAppointment: '', medications: 0,
                   conditions: '',
                   allergies: '',
-                  emergencyName: '', emergencyPhone: '', emergencyRelation: '',
+                  primaryContactName: '', primaryContactPhone: '', primaryContactCountryCode: '+91',
+                  relativeContactName: '', relativeContactPhone: '', relativeContactRelation: '', relativeContactCountryCode: '+91',
                   insuranceProvider: '', insurancePolicy: '',
                   doctorName: '', doctorPhone: '', doctorSpecialty: ''
                 })

@@ -26,7 +26,8 @@ import {
   Zap,
   Plus,
   X,
-  ArrowRight
+  ArrowRight,
+  RefreshCw
 } from 'lucide-react'
 
 interface HealthInsight {
@@ -48,6 +49,10 @@ interface HealthPrediction {
   riskLevel: 'low' | 'medium' | 'high'
   timeframe: string
   recommendations: string[]
+  probability?: number
+  condition?: string
+  riskFactors?: string[]
+  confidence?: number
 }
 
 interface Symptom {
@@ -62,15 +67,26 @@ interface Symptom {
 interface SymptomAnalysis {
   id: string
   symptoms: Symptom[]
+  overview?: string
   possibleConditions: {
     name: string
     probability: number
+    overview?: string
+    commonCauses?: {
+      strainsAndSprains?: string[]
+      structuralIssues?: string[]
+      lifestyleFactors?: string[]
+      medicalConditions?: string[]
+    }
     description: string
     urgency: 'low' | 'medium' | 'high'
     recommendations: string[]
+    whenToSeekHelp?: string
   }[]
   urgencyLevel: 'low' | 'medium' | 'high'
-  analysisDate: string
+  analysisDate?: string
+  generalRecommendations?: string[]
+  whenToSeekHelp?: string
 }
 
 // GraphQL Queries and Mutations
@@ -120,6 +136,82 @@ const DELETE_AI_INSIGHT = `
   }
 `
 
+const GET_USER_DATA_FOR_RECOMMENDATIONS = `
+  query GetUserDataForRecommendations {
+    familyMembers {
+      id
+      name
+      dob
+      gender
+      conditions
+      allergies
+      medications {
+        id
+        name
+        dosage
+        frequency
+        status
+        startDate
+        endDate
+      }
+      appointments {
+        id
+        doctorName
+        specialty
+        date
+        time
+        status
+      }
+      healthReports {
+        id
+        fileName
+        createdAt
+        status
+      }
+    }
+    medications {
+      id
+      name
+      dosage
+      frequency
+      status
+      startDate
+      endDate
+      member {
+        name
+      }
+    }
+    appointments {
+      id
+      doctorName
+      specialty
+      date
+      time
+      status
+      member {
+        name
+      }
+    }
+    healthReports {
+      id
+      fileName
+      createdAt
+      status
+      member {
+        name
+      }
+    }
+    symptomAnalyses {
+      id
+      symptoms
+      createdAt
+      member {
+        name
+      }
+    }
+  }
+`
+
 export default function AIInsights() {
   const searchParams = useSearchParams()
   const { isSignedIn, user, isLoaded } = useUser()
@@ -132,6 +224,18 @@ export default function AIInsights() {
   const [analyzingSymptoms, setAnalyzingSymptoms] = useState(false)
   const [activeTab, setActiveTab] = useState('insights')
   const [searchTerm, setSearchTerm] = useState('')
+  const [recommendations, setRecommendations] = useState<{
+    healthMonitoring: string[]
+    lifestyleChanges: string[]
+    appointments: string[]
+    familyHealth: string[]
+  }>({
+    healthMonitoring: [],
+    lifestyleChanges: [],
+    appointments: [],
+    familyHealth: []
+  })
+  const [loadingRecommendations, setLoadingRecommendations] = useState(false)
 
   const commonSymptoms = [
     { id: '1', name: 'Fever', category: 'Common', icon: Thermometer },
@@ -159,6 +263,7 @@ export default function AIInsights() {
   useEffect(() => {
     if (isLoaded && isSignedIn && user) {
       loadAIInsights()
+      loadRecommendations()
     }
     
     // Check for URL parameter to set active tab
@@ -167,6 +272,13 @@ export default function AIInsights() {
       setActiveTab('symptoms')
     }
   }, [searchParams, isLoaded, isSignedIn, user])
+
+  // Reload recommendations when tab changes to recommendations
+  useEffect(() => {
+    if (activeTab === 'recommendations' && isLoaded && isSignedIn && user) {
+      loadRecommendations()
+    }
+  }, [activeTab, isLoaded, isSignedIn, user])
 
   const loadAIInsights = async () => {
     if (!user) return
@@ -185,7 +297,14 @@ export default function AIInsights() {
       console.log('🤖 Loaded AI insights from GraphQL:', data)
       
       // Convert backend data to frontend format
-      const formattedInsights: HealthInsight[] = (data.aiInsights || []).map((insight: any) => {
+      // Filter out predictions here - they will be handled separately for Health Predictions tab
+      const allInsights = (data.aiInsights || []).filter((insight: any) => {
+        const type = insight.type?.toLowerCase()
+        // Keep all insights here - SmartInsights component will filter predictions
+        return true
+      })
+      
+      const formattedInsights: HealthInsight[] = allInsights.map((insight: any) => {
         // Calculate confidence from data if available
         let confidence = 85;
         if (insight.data?.confidence) {
@@ -208,10 +327,15 @@ export default function AIInsights() {
       });
       
       // Extract predictions from insights with full data
-      const formattedPredictions: HealthPrediction[] = formattedInsights
+      // Use a Map to deduplicate predictions by condition (case-insensitive) and memberId
+      const predictionsMap = new Map<string, HealthPrediction>();
+      
+      formattedInsights
         .filter(i => i.type === 'prediction')
-        .map(insight => {
+        .forEach(insight => {
           const insightData = (data.aiInsights || []).find((i: any) => i.id === insight.id);
+          if (!insightData) return;
+          
           const actionItems = insightData?.actionItems || {};
           const allRecommendations = [
             ...(actionItems.immediate || []),
@@ -219,22 +343,75 @@ export default function AIInsights() {
             ...(actionItems.longTerm || [])
           ];
 
-          return {
-            memberId: insightData?.memberId || '',
-            memberName: insightData?.member?.name || 'Family Member',
-            prediction: insight.description,
-            riskLevel: insight.severity as 'low' | 'medium' | 'high',
-            timeframe: insightData?.data?.timeframe || '5-10 years',
-            recommendations: allRecommendations,
-            probability: insightData?.data?.probability || 0,
-            condition: insightData?.data?.condition || '',
-            riskFactors: insightData?.data?.riskFactors || [],
-            confidence: insight.confidence
-          };
-        })
+          const condition = (insightData?.data?.condition || '').toLowerCase().trim();
+          const memberId = insightData?.memberId || '';
+          const probability = insightData?.data?.probability || 0;
+          
+          // Create unique key for deduplication: condition (normalized) + memberId
+          // Use 'all' for null memberId to group user-level predictions
+          const uniqueKey = `${condition}-${memberId || 'all'}`;
+          
+          // Only add if not already exists (prevent duplicates)
+          // If exists, keep the one with higher probability or more recent
+          if (!predictionsMap.has(uniqueKey)) {
+            // Calculate risk level from probability (real calculation)
+            let riskLevel: 'low' | 'medium' | 'high' = 'low';
+            if (probability >= 60) {
+              riskLevel = 'high';
+            } else if (probability >= 40) {
+              riskLevel = 'medium';
+            } else {
+              riskLevel = 'low';
+            }
+            
+            // Override with severity from insight if it's more accurate
+            const severityFromInsight = insight.severity as 'low' | 'medium' | 'high';
+            if (severityFromInsight && probability > 0) {
+              // Use the more conservative risk level
+              if (severityFromInsight === 'high' || riskLevel === 'high') {
+                riskLevel = 'high';
+              } else if (severityFromInsight === 'medium' || riskLevel === 'medium') {
+                riskLevel = 'medium';
+              }
+            }
+
+            predictionsMap.set(uniqueKey, {
+              memberId,
+              memberName: insightData?.member?.name || 'Family Member',
+              prediction: insight.description,
+              riskLevel,
+              timeframe: insightData?.data?.timeframe || '',
+              recommendations: allRecommendations,
+              probability,
+              condition: insightData?.data?.condition || condition, // Use original case from data
+              riskFactors: insightData?.data?.riskFactors || [],
+              confidence: insight.confidence
+            });
+          } else {
+            // If duplicate exists, keep the one with higher probability or more recent timestamp
+            const existing = predictionsMap.get(uniqueKey)!;
+            if (probability > existing.probability || 
+                (probability === existing.probability && new Date(insight.timestamp) > new Date(existing.prediction))) {
+              predictionsMap.set(uniqueKey, {
+                memberId,
+                memberName: insightData?.member?.name || 'Family Member',
+                prediction: insight.description,
+                riskLevel,
+                timeframe: insightData?.data?.timeframe || '',
+                recommendations: allRecommendations,
+                probability,
+                condition: insightData?.data?.condition || condition,
+                riskFactors: insightData?.data?.riskFactors || [],
+                confidence: insight.confidence
+              });
+            }
+          }
+        });
+      
+      const uniquePredictions = Array.from(predictionsMap.values());
       
       setInsights(formattedInsights)
-      setPredictions(formattedPredictions)
+      setPredictions(uniquePredictions)
       
     } catch (error) {
       console.error('Error loading AI insights:', error)
@@ -243,6 +420,259 @@ export default function AIInsights() {
     } finally {
       setLoading(false)
     }
+  }
+
+  const loadRecommendations = async () => {
+    if (!user) return
+    
+    try {
+      setLoadingRecommendations(true)
+      const token = await getToken()
+      if (!token) {
+        throw new Error('No authentication token available')
+      }
+
+      // Fetch comprehensive user data
+      const userData = await graphqlRequest(GET_USER_DATA_FOR_RECOMMENDATIONS, {}, token)
+      
+      // Generate personalized recommendations using AI
+      const personalizedRecommendations = await generatePersonalizedRecommendations(userData, token)
+      
+      setRecommendations(personalizedRecommendations)
+    } catch (error) {
+      console.error('Error loading recommendations:', error)
+      // Fallback to basic recommendations if AI fails
+      setRecommendations({
+        healthMonitoring: ['Schedule regular health checkups', 'Monitor your health metrics'],
+        lifestyleChanges: ['Maintain a balanced diet', 'Stay physically active'],
+        appointments: ['Keep track of upcoming appointments'],
+        familyHealth: ['Ensure all family members have updated health records']
+      })
+    } finally {
+      setLoadingRecommendations(false)
+    }
+  }
+
+  const generatePersonalizedRecommendations = async (userData: any, token: string) => {
+    try {
+      const openAiKey = process.env.NEXT_PUBLIC_OPENAI_API_KEY || ''
+      
+      // Prepare user context for AI
+      const familyMembers = userData.familyMembers || []
+      const medications = userData.medications || []
+      const appointments = userData.appointments || []
+      const healthReports = userData.healthReports || []
+      const symptomAnalyses = userData.symptomAnalyses || []
+
+      // Build comprehensive user context
+      const userContext = {
+        familyMembers: familyMembers.map((m: any) => ({
+          name: m.name,
+          age: m.dob ? Math.floor((Date.now() - new Date(m.dob).getTime()) / (1000 * 60 * 60 * 24 * 365)) : null,
+          gender: m.gender,
+          conditions: m.conditions || [],
+          allergies: m.allergies || [],
+          activeMedications: (m.medications || []).filter((med: any) => med.status === 'active').length,
+          upcomingAppointments: (m.appointments || []).filter((apt: any) => {
+            const aptDate = new Date(apt.date)
+            return aptDate.getTime() > Date.now() && apt.status !== 'cancelled'
+          }).length
+        })),
+        totalActiveMedications: medications.filter((m: any) => m.status === 'active').length,
+        upcomingAppointments: appointments.filter((apt: any) => {
+          const aptDate = new Date(apt.date)
+          return aptDate.getTime() > Date.now() && apt.status !== 'cancelled'
+        }).length,
+        recentReports: healthReports.filter((r: any) => {
+          const reportDate = new Date(r.createdAt)
+          const daysSince = (Date.now() - reportDate.getTime()) / (1000 * 60 * 60 * 24)
+          return daysSince <= 30
+        }).length,
+        recentSymptoms: symptomAnalyses.filter((s: any) => {
+          const symptomDate = new Date(s.createdAt)
+          const daysSince = (Date.now() - symptomDate.getTime()) / (1000 * 60 * 60 * 24)
+          return daysSince <= 7
+        }).length
+      }
+
+      // If no OpenAI key, generate basic recommendations from data
+      if (!openAiKey) {
+        return generateBasicRecommendations(userContext)
+      }
+
+      // Use AI to generate personalized recommendations
+      const prompt = `You are a medical AI assistant. Generate personalized, actionable health recommendations based on the following user data.
+
+USER DATA:
+${JSON.stringify(userContext, null, 2)}
+
+Generate recommendations in the following JSON format:
+{
+  "healthMonitoring": [
+    "Specific recommendation 1 based on user's conditions/medications",
+    "Specific recommendation 2",
+    ...
+  ],
+  "lifestyleChanges": [
+    "Specific lifestyle recommendation 1 based on user's health status",
+    "Specific lifestyle recommendation 2",
+    ...
+  ],
+  "appointments": [
+    "Specific appointment recommendation 1 based on user's conditions/medications",
+    "Specific appointment recommendation 2",
+    ...
+  ],
+  "familyHealth": [
+    "Specific family health recommendation 1",
+    "Specific family health recommendation 2",
+    ...
+  ]
+}
+
+CRITICAL REQUIREMENTS:
+- Recommendations MUST be specific to the user's actual data (conditions, medications, reports, symptoms)
+- Be precise and actionable - not generic advice
+- Health Monitoring: Based on their conditions (e.g., if diabetes: "Monitor blood glucose levels daily")
+- Lifestyle Changes: Based on their conditions/medications (e.g., if hypertension: "Reduce sodium intake to less than 2g per day")
+- Appointments: Based on their conditions/medications (e.g., if diabetes: "Schedule annual eye exam for diabetic retinopathy screening")
+- Family Health: Based on family members' data
+- Update recommendations based on recent reports, medications, symptoms
+- Each recommendation should be helpful and directly related to their health data
+- Maximum 4-5 recommendations per category
+- Return ONLY valid JSON, no additional text.`;
+
+      const aiResponse = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${openAiKey}`
+        },
+        body: JSON.stringify({
+          model: 'gpt-4o-mini',
+          messages: [
+            {
+              role: 'system',
+              content: 'You are a medical AI assistant that generates personalized, actionable health recommendations based on user data. Always respond with valid JSON only.'
+            },
+            {
+              role: 'user',
+              content: prompt
+            }
+          ],
+          temperature: 0.3,
+          max_tokens: 1500
+        })
+      })
+
+      if (!aiResponse.ok) {
+        throw new Error('AI API error')
+      }
+
+      const aiData = await aiResponse.json()
+      const aiContent = aiData.choices[0]?.message?.content || '{}'
+      
+      // Parse AI response
+      try {
+        const cleanedContent = aiContent.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim()
+        const aiRecommendations = JSON.parse(cleanedContent)
+        
+        return {
+          healthMonitoring: aiRecommendations.healthMonitoring || [],
+          lifestyleChanges: aiRecommendations.lifestyleChanges || [],
+          appointments: aiRecommendations.appointments || [],
+          familyHealth: aiRecommendations.familyHealth || []
+        }
+      } catch (parseError) {
+        console.error('Error parsing AI recommendations:', parseError)
+        return generateBasicRecommendations(userContext)
+      }
+    } catch (error) {
+      console.error('Error generating AI recommendations:', error)
+      return generateBasicRecommendations(userContext)
+    }
+  }
+
+  const generateBasicRecommendations = (userContext: any) => {
+    const recommendations: any = {
+      healthMonitoring: [],
+      lifestyleChanges: [],
+      appointments: [],
+      familyHealth: []
+    }
+
+    // Health Monitoring recommendations based on conditions
+    const allConditions = new Set<string>()
+    userContext.familyMembers.forEach((member: any) => {
+      (member.conditions || []).forEach((cond: string) => allConditions.add(cond.toLowerCase()))
+    })
+
+    if (allConditions.has('diabetes') || allConditions.has('type 2 diabetes')) {
+      recommendations.healthMonitoring.push('Monitor blood glucose levels daily')
+      recommendations.healthMonitoring.push('Track HbA1c levels every 3 months')
+    }
+    if (allConditions.has('hypertension') || allConditions.has('high blood pressure')) {
+      recommendations.healthMonitoring.push('Monitor blood pressure at least twice weekly')
+      recommendations.healthMonitoring.push('Track blood pressure readings in a log')
+    }
+    if (userContext.totalActiveMedications > 0) {
+      recommendations.healthMonitoring.push('Track medication adherence daily')
+    }
+    if (userContext.recentReports === 0) {
+      recommendations.healthMonitoring.push('Upload recent health reports for better insights')
+    }
+    if (recommendations.healthMonitoring.length === 0) {
+      recommendations.healthMonitoring.push('Schedule regular health checkups')
+      recommendations.healthMonitoring.push('Monitor your health metrics regularly')
+    }
+
+    // Lifestyle Changes based on conditions
+    if (allConditions.has('diabetes')) {
+      recommendations.lifestyleChanges.push('Follow a diabetes-friendly diet (low glycemic index foods)')
+      recommendations.lifestyleChanges.push('Engage in at least 150 minutes of moderate exercise per week')
+    }
+    if (allConditions.has('hypertension')) {
+      recommendations.lifestyleChanges.push('Reduce sodium intake to less than 2g per day')
+      recommendations.lifestyleChanges.push('Limit alcohol consumption')
+    }
+    if (userContext.totalActiveMedications >= 3) {
+      recommendations.lifestyleChanges.push('Maintain consistent meal times to optimize medication effectiveness')
+    }
+    if (recommendations.lifestyleChanges.length === 0) {
+      recommendations.lifestyleChanges.push('Maintain a balanced diet with plenty of fruits and vegetables')
+      recommendations.lifestyleChanges.push('Stay physically active - aim for 30 minutes daily')
+    }
+
+    // Appointment recommendations
+    if (allConditions.has('diabetes')) {
+      recommendations.appointments.push('Schedule annual eye exam for diabetic retinopathy screening')
+      recommendations.appointments.push('Book quarterly diabetes management consultation')
+    }
+    if (allConditions.has('hypertension')) {
+      recommendations.appointments.push('Schedule cardiology consultation within 2 weeks')
+    }
+    if (userContext.upcomingAppointments === 0) {
+      recommendations.appointments.push('Schedule annual physical examination')
+    }
+    if (userContext.recentReports > 0) {
+      recommendations.appointments.push('Follow up on recent health report findings with your doctor')
+    }
+    if (recommendations.appointments.length === 0) {
+      recommendations.appointments.push('Keep track of upcoming appointments')
+      recommendations.appointments.push('Schedule routine health checkups')
+    }
+
+    // Family Health recommendations
+    if (userContext.familyMembers.length > 1) {
+      recommendations.familyHealth.push('Ensure all family members have updated health records')
+      recommendations.familyHealth.push('Schedule family health checkups together when possible')
+    }
+    if (userContext.familyMembers.length > 0) {
+      recommendations.familyHealth.push('Encourage family members to track health metrics')
+      recommendations.familyHealth.push('Share healthy lifestyle habits as a family')
+    }
+
+    return recommendations
   }
 
   const handleGenerateInsights = async (memberId?: string) => {
@@ -262,9 +692,13 @@ export default function AIInsights() {
       // Reload insights
       await loadAIInsights()
       
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error generating AI insights:', error)
-      alert('Failed to generate insights. Please try again.')
+      const errorMessage = error?.message || error?.toString() || 'Unknown error occurred'
+      console.error('Full error details:', error)
+      
+      // Show more helpful error message
+      alert(`Failed to generate insights: ${errorMessage}. Please check the console for more details or try again.`)
     } finally {
       setLoading(false)
     }
@@ -341,6 +775,12 @@ export default function AIInsights() {
     ))
   }
 
+  const clearSymptomAnalysis = () => {
+    setSymptomAnalysis(null)
+    setSelectedSymptoms([])
+    setSearchTerm('')
+  }
+
   const analyzeSymptoms = async () => {
     if (!user) return
     
@@ -391,28 +831,77 @@ export default function AIInsights() {
       console.log('🔍 Symptom analysis result:', data)
       
       const result = data.analyzeSymptoms
-      const analysis = result.analysis || {}
-      const conditions = result.conditions || []
+      if (!result) {
+        throw new Error('No analysis result returned from server')
+      }
+
+      // Parse conditions - can be in result.conditions or result.analysis.possibleConditions
+      let conditions = [];
+      if (Array.isArray(result.conditions) && result.conditions.length > 0) {
+        conditions = result.conditions;
+      } else if (result.analysis && Array.isArray(result.analysis.possibleConditions)) {
+        conditions = result.analysis.possibleConditions;
+      } else if (typeof result.conditions === 'object' && result.conditions !== null && !Array.isArray(result.conditions)) {
+        // Handle object format
+        conditions = Object.entries(result.conditions).map(([name, data]: [string, any]) => ({
+          name: name,
+          probability: data?.probability || 50,
+          description: data?.description || '',
+          urgency: data?.urgency || 'medium',
+          recommendations: data?.recommendations || []
+        }));
+      }
       
+      // Ensure we have at least one condition
+      if (conditions.length === 0) {
+        conditions = [{
+          name: 'Analysis in Progress',
+          probability: 50,
+          description: 'Please wait while we analyze your symptoms...',
+          urgency: 'medium' as const,
+          recommendations: ['Please try again in a moment']
+        }];
+      }
+      
+      // Parse overview and additional fields from analysis
+      const analysisData = result.analysis || {};
+      const overview = analysisData.overview || result.overview || null;
+      const generalRecommendations = analysisData.generalRecommendations || result.generalRecommendations || [];
+      const whenToSeekHelp = analysisData.whenToSeekHelp || result.whenToSeekHelp || null;
+
       const formattedAnalysis: SymptomAnalysis = {
         id: result.id,
         symptoms: selectedSymptoms,
-        possibleConditions: Array.isArray(conditions) ? conditions.map((cond: any) => ({
+        overview: overview,
+        possibleConditions: conditions.map((cond: any) => ({
           name: cond.name || 'Unknown Condition',
-          probability: cond.probability || 50,
-          description: cond.description || '',
-          urgency: cond.urgency || 'medium' as const,
-          recommendations: cond.recommendations || []
-        })) : [],
-        urgencyLevel: result.urgencyLevel || 'medium' as const,
-        analysisDate: result.createdAt
+          probability: typeof cond.probability === 'number' ? cond.probability : parseInt(cond.probability) || 50,
+          overview: cond.overview || null,
+          commonCauses: cond.commonCauses || null,
+          description: cond.description || 'No description available',
+          urgency: (cond.urgency || result.urgencyLevel || 'medium') as 'low' | 'medium' | 'high',
+          recommendations: Array.isArray(cond.recommendations) ? cond.recommendations : [],
+          whenToSeekHelp: cond.whenToSeekHelp || null
+        })),
+        urgencyLevel: (result.urgencyLevel || 'medium') as 'low' | 'medium' | 'high',
+        analysisDate: result.createdAt,
+        generalRecommendations: generalRecommendations,
+        whenToSeekHelp: whenToSeekHelp
       }
 
+      console.log('✅ Formatted analysis:', formattedAnalysis)
       setSymptomAnalysis(formattedAnalysis)
       
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error analyzing symptoms:', error)
-      alert('Error analyzing symptoms. Please try again.')
+      const errorMessage = error?.message || error?.toString() || 'Unknown error occurred'
+      console.error('Full error details:', error)
+      
+      // Show user-friendly error message
+      alert(`Error analyzing symptoms: ${errorMessage}. Please check the console for details or try again.`)
+      
+      // Clear any previous analysis on error
+      setSymptomAnalysis(null)
     } finally {
       setAnalyzingSymptoms(false)
     }
@@ -525,51 +1014,9 @@ export default function AIInsights() {
               transition={{ duration: 0.6, delay: 0.2 }}
               className="space-y-8"
             >
-              {/* Smart Insights Component */}
+              {/* Smart Insights Component - Shows actionable insights, recommendations, alerts */}
+              {/* Predictions are filtered out and shown in Health Predictions tab */}
               <SmartInsights />
-              
-              <div className="space-y-3">
-                {insights.map((insight, index) => {
-                  const SeverityIcon = getSeverityIcon(insight.severity)
-                  const TypeIcon = getTypeIcon(insight.type)
-                  
-                  return (
-                    <motion.div
-                      key={insight.id}
-                      initial={{ opacity: 0, y: 20 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{ duration: 0.6, delay: index * 0.1 }}
-                      className={`bg-white rounded-xl p-4 shadow-md border-l-4 ${getSeverityColor(insight.severity)}`}
-                    >
-                      <div className="flex items-start space-x-3">
-                        <div className="flex-shrink-0">
-                          <div className="w-8 h-8 bg-primary-100 rounded-lg flex items-center justify-center">
-                            <TypeIcon className="w-4 h-4 text-primary-600" />
-                          </div>
-                        </div>
-                        <div className="flex-1">
-                          <div className="flex items-center space-x-2 mb-1">
-                            <h3 className="text-base font-semibold text-gray-900">{insight.title}</h3>
-                            <SeverityIcon className="w-3 h-3" />
-                          </div>
-                          <p className="text-sm text-gray-600 mb-2">{insight.description}</p>
-                          <div className="flex items-center space-x-3 text-xs text-gray-500">
-                            <span className="flex items-center">
-                              <Shield className="w-3 h-3 mr-1" />
-                              {insight.confidence}% confidence
-                            </span>
-                            <span className="flex items-center">
-                              <Clock className="w-3 h-3 mr-1" />
-                              {new Date(insight.timestamp).toLocaleDateString()}
-                            </span>
-                            <span className="capitalize">{insight.category}</span>
-                          </div>
-                        </div>
-                      </div>
-                    </motion.div>
-                  )
-                })}
-              </div>
             </motion.div>
           )}
 
@@ -602,7 +1049,7 @@ export default function AIInsights() {
                     
                     return (
                       <motion.div
-                        key={prediction.memberId || `prediction-${index}`}
+                        key={`${prediction.condition}-${prediction.memberId}-${index}`}
                         initial={{ opacity: 0, y: 20 }}
                         animate={{ opacity: 1, y: 0 }}
                         transition={{ duration: 0.6, delay: index * 0.1 }}
@@ -703,7 +1150,51 @@ export default function AIInsights() {
               transition={{ duration: 0.6, delay: 0.2 }}
               className="space-y-8"
             >
-              {/* Selected Symptoms */}
+              {/* Symptom Search - Always at the top */}
+              <div className="bg-white rounded-3xl p-8 shadow-xl">
+                <div className="flex items-center space-x-4 mb-6">
+                  <Search className="w-8 h-8 text-gray-400" />
+                  <input
+                    type="text"
+                    placeholder="Search symptoms..."
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    className="flex-1 px-6 py-4 text-lg border border-gray-300 rounded-2xl focus:outline-none focus:ring-2 focus:ring-primary-500"
+                  />
+                </div>
+
+                <div className="grid grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
+                  {filteredSymptoms.map((symptom, index) => {
+                    const isSelected = selectedSymptoms.some(s => s.name === symptom.name)
+                    
+                    return (
+                      <motion.button
+                        key={symptom.id}
+                        initial={{ opacity: 0, scale: 0.9 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        transition={{ duration: 0.3, delay: index * 0.05 }}
+                        onClick={() => addSymptom(symptom)}
+                        disabled={isSelected}
+                        className={`p-4 rounded-lg border-2 transition-all ${
+                          isSelected 
+                            ? 'bg-primary-100 border-primary-300 text-primary-700' 
+                            : 'bg-white border-gray-200 hover:border-primary-300 hover:bg-primary-50'
+                        }`}
+                      >
+                        <div className="flex flex-col items-center justify-center h-full">
+                          {symptom.icon === Thermometer && <Thermometer className="w-5 h-5 mb-2 text-gray-600" />}
+                          {symptom.icon === Activity && <Activity className="w-5 h-5 mb-2 text-gray-600" />}
+                          {symptom.icon === Heart && <Heart className="w-5 h-5 mb-2 text-gray-600" />}
+                          {symptom.icon === Eye && <Eye className="w-5 h-5 mb-2 text-gray-600" />}
+                          <p className="text-sm font-medium text-center text-gray-900">{symptom.name}</p>
+                        </div>
+                      </motion.button>
+                    )
+                  })}
+                </div>
+              </div>
+
+              {/* Selected Symptoms - Appears below search box */}
               {selectedSymptoms.length > 0 && (
                 <div className="bg-white rounded-3xl p-8 shadow-xl">
                   <h3 className="text-2xl font-bold text-gray-900 mb-6">Selected Symptoms</h3>
@@ -786,71 +1277,45 @@ export default function AIInsights() {
                 </div>
               )}
 
-              {/* Symptom Search */}
-              <div className="bg-white rounded-3xl p-8 shadow-xl">
-                <div className="flex items-center space-x-4 mb-6">
-                  <Search className="w-8 h-8 text-gray-400" />
-                  <input
-                    type="text"
-                    placeholder="Search symptoms..."
-                    value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
-                    className="flex-1 px-6 py-4 text-lg border border-gray-300 rounded-2xl focus:outline-none focus:ring-2 focus:ring-primary-500"
-                  />
-                </div>
-
-                <div className="grid grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
-                  {filteredSymptoms.map((symptom, index) => {
-                    const isSelected = selectedSymptoms.some(s => s.name === symptom.name)
-                    
-                    return (
-                      <motion.button
-                        key={symptom.id}
-                        initial={{ opacity: 0, scale: 0.9 }}
-                        animate={{ opacity: 1, scale: 1 }}
-                        transition={{ duration: 0.3, delay: index * 0.05 }}
-                        onClick={() => addSymptom(symptom)}
-                        disabled={isSelected}
-                        className={`p-4 rounded-lg border-2 transition-all ${
-                          isSelected 
-                            ? 'bg-primary-100 border-primary-300 text-primary-700' 
-                            : 'bg-white border-gray-200 hover:border-primary-300 hover:bg-primary-50'
-                        }`}
-                      >
-                        <div className="flex flex-col items-center justify-center h-full">
-                          {symptom.icon === Thermometer && <Thermometer className="w-5 h-5 mb-2 text-gray-600" />}
-                          {symptom.icon === Activity && <Activity className="w-5 h-5 mb-2 text-gray-600" />}
-                          {symptom.icon === Heart && <Heart className="w-5 h-5 mb-2 text-gray-600" />}
-                          {symptom.icon === Eye && <Eye className="w-5 h-5 mb-2 text-gray-600" />}
-                          <p className="text-sm font-medium text-center text-gray-900">{symptom.name}</p>
-                        </div>
-                      </motion.button>
-                    )
-                  })}
-                </div>
-              </div>
-
               {/* Analysis Results */}
               {symptomAnalysis && (
                 <div className="bg-white rounded-xl p-4 shadow-md">
-                  <h3 className="text-lg font-bold text-gray-900 mb-4">AI Analysis Results</h3>
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-lg font-bold text-gray-900">AI Analysis Results</h3>
+                    <button
+                      onClick={clearSymptomAnalysis}
+                      className="flex items-center space-x-2 px-3 py-1.5 text-sm text-gray-600 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                      title="Clear all symptoms and analysis"
+                    >
+                      <X className="w-4 h-4" />
+                      <span>Clear All</span>
+                    </button>
+                  </div>
                   
-                  <div className="space-y-3">
-                    {symptomAnalysis.possibleConditions.map((condition, index) => (
+                  {/* Overview Section */}
+                  {symptomAnalysis.overview && (
+                    <div className="mb-6 p-4 bg-blue-50 rounded-lg border-l-4 border-blue-500">
+                      <p className="text-base text-gray-800 leading-relaxed">{symptomAnalysis.overview}</p>
+                    </div>
+                  )}
+
+                  {symptomAnalysis.possibleConditions && symptomAnalysis.possibleConditions.length > 0 ? (
+                    <div className="space-y-6">
+                      {symptomAnalysis.possibleConditions.map((condition, index) => (
                       <motion.div
                         key={index}
                         initial={{ opacity: 0, y: 20 }}
                         animate={{ opacity: 1, y: 0 }}
                         transition={{ duration: 0.6, delay: index * 0.1 }}
-                        className="p-3 rounded-lg border-l-4 border-primary-500 bg-primary-50"
+                        className="p-5 rounded-lg border-l-4 border-primary-500 bg-white shadow-sm"
                       >
-                        <div className="flex items-center justify-between mb-2">
-                          <h4 className="text-base font-bold text-gray-900">{condition.name}</h4>
+                        <div className="flex items-center justify-between mb-3">
+                          <h4 className="text-lg font-bold text-gray-900">{condition.name}</h4>
                           <div className="flex items-center space-x-2">
                             <span className="text-sm font-bold text-gray-600">
                               {condition.probability}%
                             </span>
-                            <div className="w-16 h-2 bg-gray-200 rounded-full">
+                            <div className="w-20 h-2 bg-gray-200 rounded-full">
                               <div 
                                 className="h-2 bg-primary-600 rounded-full"
                                 style={{ width: `${condition.probability}%` }}
@@ -858,21 +1323,107 @@ export default function AIInsights() {
                             </div>
                           </div>
                         </div>
-                        <p className="text-sm text-gray-600 mb-2">{condition.description}</p>
-                        <div>
-                          <h5 className="text-sm font-semibold text-gray-900 mb-1">Recommendations:</h5>
-                          <ul className="space-y-1">
-                            {condition.recommendations.map((rec, idx) => (
-                              <li key={idx} className="text-sm text-gray-600 flex items-start space-x-2">
-                                <CheckCircle className="w-3 h-3 text-green-500 mt-0.5 flex-shrink-0" />
+
+                        {/* Condition Overview */}
+                        {condition.overview && (
+                          <p className="text-sm text-gray-700 mb-4 leading-relaxed">{condition.overview}</p>
+                        )}
+
+                        {/* Common Causes Section */}
+                        {condition.commonCauses && (
+                          <div className="mb-4">
+                            <h5 className="text-base font-semibold text-gray-900 mb-3">Common Causes</h5>
+                            
+                            {condition.commonCauses.strainsAndSprains && condition.commonCauses.strainsAndSprains.length > 0 && (
+                              <div className="mb-3">
+                                <h6 className="text-sm font-semibold text-gray-800 mb-2">Strains and Sprains:</h6>
+                                <p className="text-sm text-gray-700 mb-1">{condition.commonCauses.strainsAndSprains.join('; ')}</p>
+                              </div>
+                            )}
+
+                            {condition.commonCauses.structuralIssues && condition.commonCauses.structuralIssues.length > 0 && (
+                              <div className="mb-3">
+                                <h6 className="text-sm font-semibold text-gray-800 mb-2">Structural Issues:</h6>
+                                <p className="text-sm text-gray-700 mb-1">{condition.commonCauses.structuralIssues.join('; ')}</p>
+                              </div>
+                            )}
+
+                            {condition.commonCauses.lifestyleFactors && condition.commonCauses.lifestyleFactors.length > 0 && (
+                              <div className="mb-3">
+                                <h6 className="text-sm font-semibold text-gray-800 mb-2">Lifestyle Factors:</h6>
+                                <p className="text-sm text-gray-700 mb-1">{condition.commonCauses.lifestyleFactors.join('; ')}</p>
+                              </div>
+                            )}
+
+                            {condition.commonCauses.medicalConditions && condition.commonCauses.medicalConditions.length > 0 && (
+                              <div className="mb-3">
+                                <h6 className="text-sm font-semibold text-gray-800 mb-2">Medical Conditions:</h6>
+                                <p className="text-sm text-gray-700 mb-1">{condition.commonCauses.medicalConditions.join('; ')}</p>
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        {/* Description */}
+                        {condition.description && (
+                          <p className="text-sm text-gray-600 mb-4 leading-relaxed">{condition.description}</p>
+                        )}
+
+                        {/* Recommendations */}
+                        {condition.recommendations && condition.recommendations.length > 0 && (
+                          <div className="mb-4">
+                            <h5 className="text-sm font-semibold text-gray-900 mb-2">Recommendations:</h5>
+                            <ul className="space-y-1.5">
+                              {condition.recommendations.map((rec, idx) => (
+                                <li key={idx} className="text-sm text-gray-600 flex items-start space-x-2">
+                                  <CheckCircle className="w-3.5 h-3.5 text-green-500 mt-0.5 flex-shrink-0" />
+                                  <span>{rec}</span>
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+
+                        {/* When to Seek Help */}
+                        {condition.whenToSeekHelp && (
+                          <div className="mt-4 p-3 bg-yellow-50 rounded-lg border-l-4 border-yellow-500">
+                            <h6 className="text-sm font-semibold text-yellow-800 mb-1">When to Seek Medical Help:</h6>
+                            <p className="text-sm text-yellow-700">{condition.whenToSeekHelp}</p>
+                          </div>
+                        )}
+                      </motion.div>
+                      ))}
+
+                      {/* General Recommendations */}
+                      {symptomAnalysis.generalRecommendations && symptomAnalysis.generalRecommendations.length > 0 && (
+                        <div className="mt-6 p-4 bg-gray-50 rounded-lg">
+                          <h5 className="text-base font-semibold text-gray-900 mb-3">General Recommendations</h5>
+                          <ul className="space-y-2">
+                            {symptomAnalysis.generalRecommendations.map((rec, idx) => (
+                              <li key={idx} className="text-sm text-gray-700 flex items-start space-x-2">
+                                <CheckCircle className="w-4 h-4 text-green-500 mt-0.5 flex-shrink-0" />
                                 <span>{rec}</span>
                               </li>
                             ))}
                           </ul>
                         </div>
-                      </motion.div>
-                    ))}
-                  </div>
+                      )}
+
+                      {/* When to Seek Help (General) */}
+                      {symptomAnalysis.whenToSeekHelp && (
+                        <div className="mt-4 p-4 bg-red-50 rounded-lg border-l-4 border-red-500">
+                          <h6 className="text-sm font-semibold text-red-800 mb-2">⚠️ When to Seek Immediate Medical Attention:</h6>
+                          <p className="text-sm text-red-700">{symptomAnalysis.whenToSeekHelp}</p>
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="text-center py-8">
+                      <AlertTriangle className="w-12 h-12 text-gray-400 mx-auto mb-4" />
+                      <p className="text-gray-600 mb-2">No analysis results available</p>
+                      <p className="text-sm text-gray-500">Please try analyzing your symptoms again.</p>
+                    </div>
+                  )}
                 </div>
               )}
             </motion.div>
@@ -886,90 +1437,105 @@ export default function AIInsights() {
               transition={{ duration: 0.6, delay: 0.2 }}
               className="space-y-6"
             >
-              <div className="grid md:grid-cols-2 gap-6">
-                <div className="bg-white rounded-2xl p-6 shadow-lg">
-                  <div className="flex items-center space-x-3 mb-4">
-                    <Heart className="w-6 h-6 text-red-500" />
-                    <h3 className="text-lg font-semibold text-gray-900">Health Monitoring</h3>
-                  </div>
-                  <ul className="space-y-3">
-                    <li className="flex items-start space-x-2">
-                      <CheckCircle className="w-4 h-4 text-green-500 mt-0.5" />
-                      <span className="text-gray-600">Schedule regular blood pressure monitoring</span>
-                    </li>
-                    <li className="flex items-start space-x-2">
-                      <CheckCircle className="w-4 h-4 text-green-500 mt-0.5" />
-                      <span className="text-gray-600">Track medication adherence daily</span>
-                    </li>
-                    <li className="flex items-start space-x-2">
-                      <CheckCircle className="w-4 h-4 text-green-500 mt-0.5" />
-                      <span className="text-gray-600">Monitor sleep patterns and quality</span>
-                    </li>
-                  </ul>
+              {loadingRecommendations ? (
+                <div className="bg-white rounded-2xl p-8 shadow-lg text-center">
+                  <Brain className="w-12 h-12 text-primary-600 mx-auto mb-4 animate-pulse" />
+                  <p className="text-gray-600">Generating personalized recommendations...</p>
                 </div>
+              ) : (
+                <div className="grid md:grid-cols-2 gap-6">
+                  {/* Health Monitoring */}
+                  <div className="bg-white rounded-2xl p-6 shadow-lg">
+                    <div className="flex items-center space-x-3 mb-4">
+                      <Heart className="w-6 h-6 text-red-500" />
+                      <h3 className="text-lg font-semibold text-gray-900">Health Monitoring</h3>
+                    </div>
+                    {recommendations.healthMonitoring.length > 0 ? (
+                      <ul className="space-y-3">
+                        {recommendations.healthMonitoring.map((rec, idx) => (
+                          <li key={idx} className="flex items-start space-x-2">
+                            <CheckCircle className="w-4 h-4 text-green-500 mt-0.5 flex-shrink-0" />
+                            <span className="text-gray-600">{rec}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p className="text-gray-500 text-sm">No specific monitoring recommendations at this time.</p>
+                    )}
+                  </div>
 
-                <div className="bg-white rounded-2xl p-6 shadow-lg">
-                  <div className="flex items-center space-x-3 mb-4">
-                    <Activity className="w-6 h-6 text-blue-500" />
-                    <h3 className="text-lg font-semibold text-gray-900">Lifestyle Changes</h3>
+                  {/* Lifestyle Changes */}
+                  <div className="bg-white rounded-2xl p-6 shadow-lg">
+                    <div className="flex items-center space-x-3 mb-4">
+                      <Activity className="w-6 h-6 text-blue-500" />
+                      <h3 className="text-lg font-semibold text-gray-900">Lifestyle Changes</h3>
+                    </div>
+                    {recommendations.lifestyleChanges.length > 0 ? (
+                      <ul className="space-y-3">
+                        {recommendations.lifestyleChanges.map((rec, idx) => (
+                          <li key={idx} className="flex items-start space-x-2">
+                            <CheckCircle className="w-4 h-4 text-green-500 mt-0.5 flex-shrink-0" />
+                            <span className="text-gray-600">{rec}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p className="text-gray-500 text-sm">No specific lifestyle recommendations at this time.</p>
+                    )}
                   </div>
-                  <ul className="space-y-3">
-                    <li className="flex items-start space-x-2">
-                      <CheckCircle className="w-4 h-4 text-green-500 mt-0.5" />
-                      <span className="text-gray-600">Increase daily physical activity by 30 minutes</span>
-                    </li>
-                    <li className="flex items-start space-x-2">
-                      <CheckCircle className="w-4 h-4 text-green-500 mt-0.5" />
-                      <span className="text-gray-600">Reduce sodium intake to less than 2g per day</span>
-                    </li>
-                    <li className="flex items-start space-x-2">
-                      <CheckCircle className="w-4 h-4 text-green-500 mt-0.5" />
-                      <span className="text-gray-600">Practice stress management techniques</span>
-                    </li>
-                  </ul>
-                </div>
 
-                <div className="bg-white rounded-2xl p-6 shadow-lg">
-                  <div className="flex items-center space-x-3 mb-4">
-                    <Calendar className="w-6 h-6 text-purple-500" />
-                    <h3 className="text-lg font-semibold text-gray-900">Appointments</h3>
+                  {/* Appointments */}
+                  <div className="bg-white rounded-2xl p-6 shadow-lg">
+                    <div className="flex items-center space-x-3 mb-4">
+                      <Calendar className="w-6 h-6 text-purple-500" />
+                      <h3 className="text-lg font-semibold text-gray-900">Appointments</h3>
+                    </div>
+                    {recommendations.appointments.length > 0 ? (
+                      <ul className="space-y-3">
+                        {recommendations.appointments.map((rec, idx) => (
+                          <li key={idx} className="flex items-start space-x-2">
+                            <CheckCircle className="w-4 h-4 text-green-500 mt-0.5 flex-shrink-0" />
+                            <span className="text-gray-600">{rec}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p className="text-gray-500 text-sm">No specific appointment recommendations at this time.</p>
+                    )}
                   </div>
-                  <ul className="space-y-3">
-                    <li className="flex items-start space-x-2">
-                      <CheckCircle className="w-4 h-4 text-green-500 mt-0.5" />
-                      <span className="text-gray-600">Schedule cardiology consultation within 2 weeks</span>
-                    </li>
-                    <li className="flex items-start space-x-2">
-                      <CheckCircle className="w-4 h-4 text-green-500 mt-0.5" />
-                      <span className="text-gray-600">Book annual physical examination</span>
-                    </li>
-                    <li className="flex items-start space-x-2">
-                      <CheckCircle className="w-4 h-4 text-green-500 mt-0.5" />
-                      <span className="text-gray-600">Follow up on blood work results</span>
-                    </li>
-                  </ul>
-                </div>
 
-                <div className="bg-white rounded-2xl p-6 shadow-lg">
-                  <div className="flex items-center space-x-3 mb-4">
-                    <Users className="w-6 h-6 text-green-500" />
-                    <h3 className="text-lg font-semibold text-gray-900">Family Health</h3>
+                  {/* Family Health */}
+                  <div className="bg-white rounded-2xl p-6 shadow-lg">
+                    <div className="flex items-center space-x-3 mb-4">
+                      <Users className="w-6 h-6 text-green-500" />
+                      <h3 className="text-lg font-semibold text-gray-900">Family Health</h3>
+                    </div>
+                    {recommendations.familyHealth.length > 0 ? (
+                      <ul className="space-y-3">
+                        {recommendations.familyHealth.map((rec, idx) => (
+                          <li key={idx} className="flex items-start space-x-2">
+                            <CheckCircle className="w-4 h-4 text-green-500 mt-0.5 flex-shrink-0" />
+                            <span className="text-gray-600">{rec}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p className="text-gray-500 text-sm">No specific family health recommendations at this time.</p>
+                    )}
                   </div>
-                  <ul className="space-y-3">
-                    <li className="flex items-start space-x-2">
-                      <CheckCircle className="w-4 h-4 text-green-500 mt-0.5" />
-                      <span className="text-gray-600">Encourage family members to track health metrics</span>
-                    </li>
-                    <li className="flex items-start space-x-2">
-                      <CheckCircle className="w-4 h-4 text-green-500 mt-0.5" />
-                      <span className="text-gray-600">Schedule family health checkups together</span>
-                    </li>
-                    <li className="flex items-start space-x-2">
-                      <CheckCircle className="w-4 h-4 text-green-500 mt-0.5" />
-                      <span className="text-gray-600">Share healthy lifestyle habits as a family</span>
-                    </li>
-                  </ul>
                 </div>
+              )}
+              
+              {/* Refresh Button */}
+              <div className="flex justify-center mt-6">
+                <button
+                  onClick={loadRecommendations}
+                  disabled={loadingRecommendations}
+                  className="flex items-center space-x-2 px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <RefreshCw className={`w-4 h-4 ${loadingRecommendations ? 'animate-spin' : ''}`} />
+                  <span>{loadingRecommendations ? 'Updating...' : 'Refresh Recommendations'}</span>
+                </button>
               </div>
             </motion.div>
           )}

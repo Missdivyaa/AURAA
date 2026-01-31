@@ -202,22 +202,18 @@ export default function RecentActivity({ familyMembers = [] }: RecentActivityPro
     try {
       const token = await getToken()
       if (!token) {
-        alert('Please sign in to update appointments')
         return
       }
       
-      const notes = prompt('Add any notes about the appointment (optional):') || ''
-      await graphqlRequest(MARK_APPOINTMENT_COMPLETED, { id: appointmentId, notes }, token)
+      // Mark as completed without asking for notes
+      await graphqlRequest(MARK_APPOINTMENT_COMPLETED, { id: appointmentId, notes: '' }, token)
       
       // Refresh activities
       const data = await graphqlRequest(GET_RECENT_ACTIVITIES, {}, token)
       const realActivities = generateRealActivities(data)
       setActivities(realActivities)
-      
-      alert('Appointment marked as completed!')
     } catch (error) {
       console.error('Error marking appointment as completed:', error)
-      alert('Failed to update appointment. Please try again.')
     }
   }
   
@@ -226,22 +222,18 @@ export default function RecentActivity({ familyMembers = [] }: RecentActivityPro
     try {
       const token = await getToken()
       if (!token) {
-        alert('Please sign in to update appointments')
         return
       }
       
-      const reason = prompt('Please provide a reason (missed, cancelled, etc.):') || 'Missed'
-      await graphqlRequest(CANCEL_APPOINTMENT, { id: appointmentId, reason }, token)
+      // Mark as missed without asking for reason
+      await graphqlRequest(CANCEL_APPOINTMENT, { id: appointmentId, reason: 'Missed' }, token)
       
       // Refresh activities
       const data = await graphqlRequest(GET_RECENT_ACTIVITIES, {}, token)
       const realActivities = generateRealActivities(data)
       setActivities(realActivities)
-      
-      alert('Appointment marked as missed/cancelled!')
     } catch (error) {
       console.error('Error marking appointment as missed:', error)
-      alert('Failed to update appointment. Please try again.')
     }
   }
 

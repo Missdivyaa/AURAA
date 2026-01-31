@@ -41,6 +41,7 @@ interface FamilyMemberCardProps {
 export default function FamilyMemberCard({ member, index, onRemove, onEdit }: FamilyMemberCardProps) {
   const [showMenu, setShowMenu] = useState(false)
   const [showHealthScore, setShowHealthScore] = useState(false)
+  const [showMoreConditions, setShowMoreConditions] = useState(false)
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -172,7 +173,7 @@ export default function FamilyMemberCard({ member, index, onRemove, onEdit }: Fa
 
         {/* Conditions */}
         {member.conditions.length > 0 && (
-          <div>
+          <div className="relative">
             <h4 className="text-sm font-medium text-gray-700 mb-2">Conditions</h4>
             <div className="flex flex-wrap gap-2">
               {member.conditions.slice(0, 2).map((condition, idx) => (
@@ -184,9 +185,42 @@ export default function FamilyMemberCard({ member, index, onRemove, onEdit }: Fa
                 </span>
               ))}
               {member.conditions.length > 2 && (
-                <span className="px-2 py-1 bg-gray-100 text-gray-600 text-xs rounded-full">
-                  +{member.conditions.length - 2} more
-                </span>
+                <>
+                  <button
+                    onClick={() => setShowMoreConditions(!showMoreConditions)}
+                    onMouseEnter={() => setShowMoreConditions(true)}
+                    onMouseLeave={() => setShowMoreConditions(false)}
+                    className="px-2 py-1 bg-blue-100 text-blue-700 text-xs rounded-full hover:bg-blue-200 transition-colors cursor-pointer border border-blue-300"
+                    title={`Click to see all ${member.conditions.length} conditions`}
+                  >
+                    +{member.conditions.length - 2} more
+                  </button>
+                  
+                  {/* Tooltip/Popover showing remaining conditions */}
+                  {showMoreConditions && (
+                    <div 
+                      className="absolute z-20 mt-1 left-0 bg-white border border-gray-200 rounded-lg shadow-lg p-3 min-w-[200px] max-w-[300px]"
+                      onMouseEnter={() => setShowMoreConditions(true)}
+                      onMouseLeave={() => setShowMoreConditions(false)}
+                    >
+                      <div className="text-xs font-semibold text-gray-700 mb-2">All Conditions:</div>
+                      <div className="flex flex-wrap gap-2">
+                        {member.conditions.map((condition, idx) => (
+                          <span
+                            key={idx}
+                            className={`px-2 py-1 text-xs rounded-full ${
+                              idx < 2 
+                                ? 'bg-orange-100 text-orange-800' 
+                                : 'bg-gray-100 text-gray-700'
+                            }`}
+                          >
+                            {condition}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </>
               )}
             </div>
           </div>

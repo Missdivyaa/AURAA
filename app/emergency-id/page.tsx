@@ -28,7 +28,8 @@ import {
   Calendar,
   Activity,
   RefreshCw,
-  ChevronDown
+  ChevronDown,
+  X
 } from 'lucide-react'
 
 interface FamilyMember {
@@ -50,6 +51,9 @@ interface FamilyMember {
   phone?: string
   email?: string
   address?: string
+  gender?: string
+  height?: number
+  weight?: number
   status: 'excellent' | 'good' | 'fair' | 'poor'
 }
 
@@ -89,6 +93,18 @@ export default function EmergencyID() {
   const [showQRModal, setShowQRModal] = useState(false)
   const [loading, setLoading] = useState(true)
   const [showDropdown, setShowDropdown] = useState(false)
+  const [showEditContactsModal, setShowEditContactsModal] = useState(false)
+  const [editingMemberId, setEditingMemberId] = useState<string>('')
+  const [editingContactType, setEditingContactType] = useState<'primary' | 'relative' | 'add' | null>(null)
+  const [contactForm, setContactForm] = useState({
+    primaryContactName: '',
+    primaryContactPhone: '',
+    primaryContactCountryCode: '+91',
+    relativeContactName: '',
+    relativeContactPhone: '',
+    relativeContactRelation: '',
+    relativeContactCountryCode: '+91'
+  })
 
   useEffect(() => {
     if (isLoaded && isSignedIn && user) {
@@ -131,6 +147,8 @@ export default function EmergencyID() {
             bloodType
             phone
             email
+            height
+            weight
             conditions
             allergies
             emergencyContacts
@@ -164,11 +182,14 @@ export default function EmergencyID() {
         phone: member.phone || undefined,
         email: member.email || undefined,
         address: member.address || (member.insurance?.address) || undefined,
+        gender: member.gender || undefined,
+        height: member.height || undefined,
+        weight: member.weight || undefined,
         status: 'good' as const
       }))
       
       setFamilyMembers(formattedMembers)
-      if (formattedMembers.length > 0) {
+      if (formattedMembers.length > 0 && !selectedMember) {
         setSelectedMember(formattedMembers[0].id)
       }
     } catch (error) {
@@ -369,8 +390,27 @@ export default function EmergencyID() {
     // Basic Information
     qrText += `PATIENT: ${member.name}\n`
     qrText += `AGE: ${member.age} years\n`
+    if (member.gender) {
+      qrText += `GENDER: ${member.gender}\n`
+    }
     qrText += `RELATIONSHIP: ${member.relationship}\n`
-    qrText += `BLOOD TYPE: ${emergencyInfo.bloodType}\n\n`
+    qrText += `BLOOD TYPE: ${emergencyInfo.bloodType}\n`
+    if (member.height) {
+      qrText += `HEIGHT: ${member.height} cm\n`
+    }
+    if (member.weight) {
+      qrText += `WEIGHT: ${member.weight} kg\n`
+    }
+    if (emergencyInfo.medicalConditions && emergencyInfo.medicalConditions.length > 0) {
+      qrText += `MEDICAL CONDITIONS: ${emergencyInfo.medicalConditions.length} condition(s)\n`
+    }
+    if (emergencyInfo.allergies && emergencyInfo.allergies.length > 0) {
+      qrText += `KNOWN ALLERGIES: ${emergencyInfo.allergies.length} allergy/allergies\n`
+    }
+    if (emergencyInfo.medications && emergencyInfo.medications.length > 0) {
+      qrText += `ACTIVE MEDICATIONS: ${emergencyInfo.medications.length} medication(s)\n`
+    }
+    qrText += '\n'
     
     // Medical Conditions
     if (emergencyInfo.medicalConditions && emergencyInfo.medicalConditions.length > 0) {
@@ -577,7 +617,7 @@ export default function EmergencyID() {
         </motion.div>
 
         {/* QR Code Display */}
-        {selectedMemberData && selectedEmergencyData && (
+        {selectedMemberData ? (
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
@@ -635,35 +675,57 @@ export default function EmergencyID() {
                         <User className="w-4 h-4" />
                         <span>Basic Information</span>
                       </h4>
-                      <div className="grid grid-cols-2 gap-2 text-sm">
-                        <div><strong>Name:</strong> {selectedMemberData.name}</div>
-                        <div><strong>Age:</strong> {selectedMemberData.age} years</div>
-                        <div><strong>Blood Type:</strong> {selectedEmergencyData.bloodType !== 'Unknown' ? selectedEmergencyData.bloodType : 'Not specified'}</div>
-                        <div><strong>Relationship:</strong> {selectedMemberData.relationship}</div>
-                        {selectedMemberData.phone && (
-                          <div><strong>Phone:</strong> {selectedMemberData.phone}</div>
+                      <div className="grid grid-cols-2 gap-2 text-sm text-gray-800">
+                        <div className="text-gray-800"><strong className="text-gray-900">Name:</strong> <span className="text-gray-700">{selectedMemberData.name || 'Not provided'}</span></div>
+                        <div className="text-gray-800"><strong className="text-gray-900">Age:</strong> <span className="text-gray-700">{selectedMemberData.age ? `${selectedMemberData.age} years` : 'Not provided'}</span></div>
+                        {selectedMemberData.gender ? (
+                          <div className="text-gray-800"><strong className="text-gray-900">Gender:</strong> <span className="text-gray-700">{selectedMemberData.gender}</span></div>
+                        ) : (
+                          <div className="text-gray-800"><strong className="text-gray-900">Gender:</strong> <span className="text-gray-500">Not specified</span></div>
                         )}
-                        {selectedMemberData.email && (
-                          <div><strong>Email:</strong> {selectedMemberData.email}</div>
+                        {selectedEmergencyData ? (
+                          <div className="text-gray-800"><strong className="text-gray-900">Blood Type:</strong> <span className="text-gray-700">{selectedEmergencyData.bloodType && selectedEmergencyData.bloodType !== 'Unknown' ? selectedEmergencyData.bloodType : 'Not specified'}</span></div>
+                        ) : (
+                          <div className="text-gray-800"><strong className="text-gray-900">Blood Type:</strong> <span className="text-gray-500">Not specified</span></div>
                         )}
-                        {selectedMemberData.address && (
-                          <div className="col-span-2"><strong>Address:</strong> {selectedMemberData.address}</div>
+                        {selectedMemberData.height ? (
+                          <div className="text-gray-800"><strong className="text-gray-900">Height:</strong> <span className="text-gray-700">{selectedMemberData.height} cm</span></div>
+                        ) : null}
+                        {selectedMemberData.weight ? (
+                          <div className="text-gray-800"><strong className="text-gray-900">Weight:</strong> <span className="text-gray-700">{selectedMemberData.weight} kg</span></div>
+                        ) : null}
+                        <div className="text-gray-800"><strong className="text-gray-900">Relationship:</strong> <span className="text-gray-700">{selectedMemberData.relationship || 'Not specified'}</span></div>
+                        {selectedEmergencyData && selectedEmergencyData.medicalConditions && selectedEmergencyData.medicalConditions.length > 0 ? (
+                          <div className="col-span-2 text-gray-800">
+                            <strong className="text-gray-900">Medical Conditions:</strong> <span className="text-gray-700">{selectedEmergencyData.medicalConditions.length} condition{selectedEmergencyData.medicalConditions.length !== 1 ? 's' : ''}</span>
+                            {selectedEmergencyData.allergies && selectedEmergencyData.allergies.length > 0 && (
+                              <span className="ml-2 text-orange-600">• {selectedEmergencyData.allergies.length} known allerg{selectedEmergencyData.allergies.length !== 1 ? 'ies' : 'y'}</span>
+                            )}
+                          </div>
+                        ) : (
+                          <div className="col-span-2 text-gray-800"><strong className="text-gray-900">Medical Conditions:</strong> <span className="text-gray-500">0 conditions</span></div>
                         )}
-                        <div><strong>Status:</strong> 
-                          <span className={`ml-1 px-2 py-1 rounded-full text-xs ${
-                            selectedMemberData.status === 'excellent' ? 'bg-green-100 text-green-800' :
-                            selectedMemberData.status === 'good' ? 'bg-blue-100 text-blue-800' :
-                            selectedMemberData.status === 'fair' ? 'bg-yellow-100 text-yellow-800' :
-                            'bg-red-100 text-red-800'
-                          }`}>
-                            {selectedMemberData.status}
-                          </span>
-                        </div>
+                        {selectedEmergencyData && selectedEmergencyData.medications && selectedEmergencyData.medications.length > 0 ? (
+                          <div className="col-span-2 text-gray-800">
+                            <strong className="text-gray-900">Active Medications:</strong> <span className="text-gray-700">{selectedEmergencyData.medications.length} medication{selectedEmergencyData.medications.length !== 1 ? 's' : ''}</span>
+                          </div>
+                        ) : (
+                          <div className="col-span-2 text-gray-800"><strong className="text-gray-900">Active Medications:</strong> <span className="text-gray-500">0 medications</span></div>
+                        )}
+                        {selectedMemberData.phone ? (
+                          <div className="text-gray-800"><strong className="text-gray-900">Phone:</strong> <span className="text-gray-700">{selectedMemberData.phone}</span></div>
+                        ) : null}
+                        {selectedMemberData.email ? (
+                          <div className="text-gray-800"><strong className="text-gray-900">Email:</strong> <span className="text-gray-700">{selectedMemberData.email}</span></div>
+                        ) : null}
+                        {selectedMemberData.address ? (
+                          <div className="col-span-2 text-gray-800"><strong className="text-gray-900">Address:</strong> <span className="text-gray-700">{selectedMemberData.address}</span></div>
+                        ) : null}
                       </div>
                     </div>
 
                     {/* Medical Conditions */}
-                    {selectedEmergencyData.medicalConditions.length > 0 && (
+                    {selectedEmergencyData && selectedEmergencyData.medicalConditions && selectedEmergencyData.medicalConditions.length > 0 && (
                       <div className="bg-red-50 rounded-xl p-4">
                         <h4 className="font-semibold text-red-900 mb-2 flex items-center space-x-2">
                           <Heart className="w-4 h-4" />
@@ -680,7 +742,7 @@ export default function EmergencyID() {
                     )}
 
                     {/* Allergies */}
-                    {selectedEmergencyData.allergies.length > 0 && (
+                    {selectedEmergencyData && selectedEmergencyData.allergies && selectedEmergencyData.allergies.length > 0 && (
                       <div className="bg-orange-50 rounded-xl p-4">
                         <h4 className="font-semibold text-orange-900 mb-2 flex items-center space-x-2">
                           <AlertTriangle className="w-4 h-4" />
@@ -701,13 +763,13 @@ export default function EmergencyID() {
                       <h4 className="font-semibold text-blue-900 mb-2 flex items-center space-x-2">
                         <Pill className="w-4 h-4" />
                         <span>Current Medications</span>
-                        {selectedEmergencyData.medications.length > 0 && (
+                        {selectedEmergencyData && selectedEmergencyData.medications && selectedEmergencyData.medications.length > 0 && (
                           <span className="ml-2 px-2 py-0.5 bg-blue-200 text-blue-800 rounded-full text-xs font-medium">
                             {selectedEmergencyData.medications.length}
                           </span>
                         )}
                       </h4>
-                      {selectedEmergencyData.medications.length > 0 ? (
+                      {selectedEmergencyData && selectedEmergencyData.medications && selectedEmergencyData.medications.length > 0 ? (
                         <div className="space-y-2">
                           {selectedEmergencyData.medications.map((medication, index) => (
                             <div key={index} className="flex items-start space-x-2 p-2 bg-white rounded-lg border border-blue-200">
@@ -732,13 +794,13 @@ export default function EmergencyID() {
                       <h4 className="font-semibold text-green-900 mb-2 flex items-center space-x-2">
                         <Phone className="w-4 h-4" />
                         <span>Emergency Contacts</span>
-                        {selectedEmergencyData.emergencyContacts.length > 0 && (
+                        {selectedEmergencyData && selectedEmergencyData.emergencyContacts && selectedEmergencyData.emergencyContacts.length > 0 && (
                           <span className="ml-2 px-2 py-0.5 bg-green-200 text-green-800 rounded-full text-xs font-medium">
                             {selectedEmergencyData.emergencyContacts.length}
                           </span>
                         )}
                       </h4>
-                      {selectedEmergencyData.emergencyContacts.length > 0 ? (
+                      {selectedEmergencyData && selectedEmergencyData.emergencyContacts && selectedEmergencyData.emergencyContacts.length > 0 ? (
                         <div className="space-y-2">
                           {selectedEmergencyData.emergencyContacts.map((contact: any, index: number) => (
                             <div key={index} className="flex items-center justify-between p-2 bg-white rounded-lg border border-green-200">
@@ -751,29 +813,128 @@ export default function EmergencyID() {
                                 </div>
                                 <div className="text-sm text-green-700">{contact.relationship}</div>
                               </div>
-                              <div className="text-sm text-green-800 font-mono">
-                                {contact.phone && contact.phone !== 'N/A' && contact.phone !== 'Not provided' ? (
-                                  <a href={`tel:${contact.phone}`} className="hover:text-green-600">
-                                    {contact.phone}
-                                  </a>
-                                ) : (
-                                  <span className="text-gray-500">{contact.phone || 'Not provided'}</span>
-                                )}
+                              <div className="flex items-center space-x-3">
+                                <div className="text-sm text-green-800 font-mono">
+                                  {contact.phone && contact.phone !== 'N/A' && contact.phone !== 'Not provided' ? (
+                                    <a href={`tel:${contact.phone}`} className="hover:text-green-600">
+                                      {contact.phone}
+                                    </a>
+                                  ) : (
+                                    <span className="text-gray-500">{contact.phone || 'Not provided'}</span>
+                                  )}
+                                </div>
+                                <button
+                                  onClick={() => {
+                                    setEditingMemberId(selectedEmergencyData.familyMemberId)
+                                    // Helper function to extract phone number and country code
+                                    const extractPhone = (phone: string) => {
+                                      if (!phone || phone === 'N/A' || phone === 'Not provided' || phone.toLowerCase().includes('not')) {
+                                        return { phone: '', countryCode: '+91' }
+                                      }
+                                      const match = phone.match(/^(\+\d+)(.+)/)
+                                      if (match) {
+                                        return { phone: match[2], countryCode: match[1] }
+                                      }
+                                      return { phone: phone.replace(/^\+\d+/, ''), countryCode: phone.match(/^\+\d+/)?.[0] || '+91' }
+                                    }
+                                    
+                                    const phoneData = extractPhone(contact.phone || '')
+                                    
+                                    if (contact.isPrimary) {
+                                      setContactForm({
+                                        primaryContactName: contact.name || '',
+                                        primaryContactPhone: phoneData.phone,
+                                        primaryContactCountryCode: phoneData.countryCode,
+                                        relativeContactName: '',
+                                        relativeContactPhone: '',
+                                        relativeContactRelation: '',
+                                        relativeContactCountryCode: '+91'
+                                      })
+                                      setEditingContactType('primary')
+                                    } else {
+                                      setContactForm({
+                                        primaryContactName: '',
+                                        primaryContactPhone: '',
+                                        primaryContactCountryCode: '+91',
+                                        relativeContactName: contact.name || '',
+                                        relativeContactPhone: phoneData.phone,
+                                        relativeContactRelation: contact.relationship || '',
+                                        relativeContactCountryCode: phoneData.countryCode
+                                      })
+                                      setEditingContactType('relative')
+                                    }
+                                    setShowEditContactsModal(true)
+                                  }}
+                                  className="p-1.5 text-green-600 hover:bg-green-100 rounded-lg transition-colors"
+                                  title={`Edit ${contact.isPrimary ? 'primary' : 'relative'} contact`}
+                                >
+                                  <Edit className="w-4 h-4" />
+                                </button>
                               </div>
                             </div>
                           ))}
                         </div>
                       ) : (
                         <div className="text-sm text-green-700 italic py-2">
-                          No emergency contacts provided. Please add emergency contacts in family member settings.
+                          No emergency contacts provided. Please add emergency contacts.
                         </div>
                       )}
+                      <button
+                        onClick={() => {
+                          setEditingMemberId(selectedEmergencyData?.familyMemberId || selectedMember)
+                          setEditingContactType('add') // Set to 'add' mode for adding new contacts
+                          // Initialize form with empty values for adding new contacts
+                          setContactForm({
+                            primaryContactName: '',
+                            primaryContactPhone: '',
+                            primaryContactCountryCode: '+91',
+                            relativeContactName: '',
+                            relativeContactPhone: '',
+                            relativeContactRelation: '',
+                            relativeContactCountryCode: '+91'
+                          })
+                          setShowEditContactsModal(true)
+                        }}
+                        className="mt-3 w-full px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors flex items-center justify-center space-x-2"
+                      >
+                        <Plus className="w-4 h-4" />
+                        <span>Add Emergency Contact</span>
+                      </button>
                     </div>
                   </div>
                 </div>
               </div>
             </div>
 
+          </motion.div>
+        ) : selectedMemberData ? (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.3 }}
+            className="space-y-8"
+          >
+            <div className="bg-white rounded-3xl p-8 shadow-xl border border-gray-200">
+              <div className="text-center mb-6">
+                <h2 className="text-2xl font-bold text-gray-900 mb-2">
+                  Emergency QR Code - {selectedMemberData.name}
+                </h2>
+                <p className="text-gray-600">
+                  Loading emergency data...
+                </p>
+              </div>
+            </div>
+          </motion.div>
+        ) : (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.3 }}
+            className="text-center py-12"
+          >
+            <User className="w-16 h-16 text-gray-400 mx-auto mb-4" />
+            <h3 className="text-xl font-semibold text-gray-900 mb-2">No Family Member Selected</h3>
+            <p className="text-gray-600">Please select a family member to view their emergency QR code.</p>
           </motion.div>
         )}
 
@@ -815,6 +976,429 @@ export default function EmergencyID() {
         </motion.div>
         </div>
       </div>
+
+      {/* Edit Emergency Contacts Modal */}
+      {showEditContactsModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl p-6 w-full max-w-md space-y-4 relative max-h-[85vh] overflow-y-auto">
+            <button 
+              onClick={() => setShowEditContactsModal(false)} 
+              className="absolute right-3 top-3 p-2 rounded-lg text-gray-600 hover:bg-gray-100"
+            >
+              <X className="w-5 h-5" />
+            </button>
+            <h3 className="text-xl font-bold text-gray-900 mb-4">
+              {editingContactType === 'add' ? 'Add Emergency Contact' : 'Edit Emergency Contacts'}
+            </h3>
+            
+            {/* Get existing contacts */}
+            {(() => {
+              const selectedData = emergencyData.find(e => e.familyMemberId === editingMemberId)
+              const existingContacts = selectedData?.emergencyContacts || []
+              const primaryContact = existingContacts.find((c: any) => c.isPrimary)
+              const relativeContact = existingContacts.find((c: any) => !c.isPrimary)
+              
+              // Helper function to extract phone number and country code
+              const extractPhone = (phone: string) => {
+                if (!phone || phone === 'N/A' || phone === 'Not provided' || phone.toLowerCase().includes('not')) {
+                  return { phone: '', countryCode: '+91', display: '' }
+                }
+                const match = phone.match(/^(\+\d+)(.+)/)
+                if (match) {
+                  return { phone: match[2], countryCode: match[1], display: phone }
+                }
+                return { phone: phone.replace(/^\+\d+/, ''), countryCode: phone.match(/^\+\d+/)?.[0] || '+91', display: phone }
+              }
+              
+              const hasValidPrimary = primaryContact && primaryContact.name && primaryContact.name !== 'Not provided' && primaryContact.name !== 'Emergency Contact' && !primaryContact.name.toLowerCase().includes('not') && primaryContact.phone && primaryContact.phone !== 'Not provided' && primaryContact.phone !== 'N/A'
+              const hasValidRelative = relativeContact && relativeContact.name && relativeContact.name !== 'Not provided' && relativeContact.name !== 'Emergency Contact' && !relativeContact.name.toLowerCase().includes('not') && relativeContact.phone && relativeContact.phone !== 'Not provided' && relativeContact.phone !== 'N/A'
+              
+              // If in "add" mode, only show input fields for contacts that don't exist yet
+              const isAddMode = editingContactType === 'add'
+              
+              return (
+                <>
+                  {/* Primary Contact - Only show in add mode if it doesn't exist, otherwise display read-only */}
+                  {isAddMode ? (
+                    hasValidPrimary ? (
+                      <div className="mb-4 p-3 bg-blue-50 rounded-lg border border-blue-200">
+                        <label className="text-xs font-medium text-blue-900 mb-2 block">Primary Contact (Your Contact)</label>
+                        <div className="p-3 bg-white rounded-lg border border-blue-200">
+                          <div className="font-medium text-gray-900">{primaryContact.name}</div>
+                          <div className="text-sm text-gray-600">{extractPhone(primaryContact.phone).display}</div>
+                          <div className="text-xs text-gray-500 mt-1">Edit via pencil icon next to contact above</div>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="mb-4 p-3 bg-blue-50 rounded-lg border border-blue-200">
+                        <label className="text-xs font-medium text-blue-900 mb-2 block">Primary Contact (Your Contact)</label>
+                        <div className="space-y-2">
+                          <input
+                            type="text"
+                            className="w-full px-3 py-2 border rounded-lg text-gray-900 text-sm"
+                            placeholder="Your name"
+                            value={contactForm.primaryContactName}
+                            onChange={e => setContactForm({...contactForm, primaryContactName: e.target.value})}
+                            onFocus={(e) => {
+                              if (e.target.value === 'Not provided' || e.target.value.toLowerCase().includes('not')) {
+                                e.target.value = ''
+                                setContactForm({...contactForm, primaryContactName: ''})
+                              }
+                            }}
+                          />
+                          <div className="flex gap-2">
+                            <select
+                              className="w-20 px-2 py-2 border rounded-lg bg-white text-gray-900 text-sm"
+                              value={contactForm.primaryContactCountryCode}
+                              onChange={e => setContactForm({ ...contactForm, primaryContactCountryCode: e.target.value })}
+                            >
+                              {['+91','+1','+44','+61','+81','+971'].map(cc => (
+                                <option key={cc} value={cc}>{cc}</option>
+                              ))}
+                            </select>
+                            <input
+                              type="tel"
+                              className="flex-1 px-3 py-2 border rounded-lg text-gray-900 text-sm"
+                              placeholder="Your phone"
+                              value={contactForm.primaryContactPhone}
+                              onChange={e => {
+                                const value = e.target.value.replace(/[^\d]/g, '')
+                                setContactForm({...contactForm, primaryContactPhone: value})
+                              }}
+                              onFocus={(e) => {
+                                if (e.target.value === 'Not provided' || e.target.value.toLowerCase().includes('not') || e.target.value === 'N/A') {
+                                  e.target.value = ''
+                                  setContactForm({...contactForm, primaryContactPhone: ''})
+                                }
+                              }}
+                            />
+                          </div>
+                          <button
+                            onClick={() => {
+                              setContactForm({...contactForm, primaryContactName: '', primaryContactPhone: ''})
+                            }}
+                            className="text-xs text-gray-600 hover:text-gray-800"
+                          >
+                            Clear
+                          </button>
+                        </div>
+                      </div>
+                    )
+                  ) : (
+                    <div className="mb-4 p-3 bg-blue-50 rounded-lg border border-blue-200">
+                      <label className="text-xs font-medium text-blue-900 mb-2 block">Primary Contact (Your Contact)</label>
+                      {hasValidPrimary && editingContactType !== 'primary' ? (
+                        <div className="flex items-center justify-between p-3 bg-white rounded-lg border border-blue-200">
+                          <div className="flex-1">
+                            <div className="font-medium text-gray-900">{primaryContact.name}</div>
+                            <div className="text-sm text-gray-600">{extractPhone(primaryContact.phone).display}</div>
+                          </div>
+                          <button
+                            onClick={() => {
+                              const phoneData = extractPhone(primaryContact.phone)
+                              setContactForm({
+                                ...contactForm,
+                                primaryContactName: primaryContact.name,
+                                primaryContactPhone: phoneData.phone,
+                                primaryContactCountryCode: phoneData.countryCode
+                              })
+                              setEditingContactType('primary')
+                            }}
+                            className="p-2 text-blue-600 hover:bg-blue-100 rounded-lg transition-colors"
+                            title="Edit primary contact"
+                          >
+                            <Edit className="w-4 h-4" />
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="space-y-2">
+                          <input
+                            type="text"
+                            className="w-full px-3 py-2 border rounded-lg text-gray-900 text-sm"
+                            placeholder="Your name"
+                            value={contactForm.primaryContactName}
+                            onChange={e => setContactForm({...contactForm, primaryContactName: e.target.value})}
+                            onFocus={(e) => {
+                              if (e.target.value === 'Not provided' || e.target.value.toLowerCase().includes('not')) {
+                                e.target.value = ''
+                                setContactForm({...contactForm, primaryContactName: ''})
+                              }
+                            }}
+                          />
+                          <div className="flex gap-2">
+                            <select
+                              className="w-20 px-2 py-2 border rounded-lg bg-white text-gray-900 text-sm"
+                              value={contactForm.primaryContactCountryCode}
+                              onChange={e => setContactForm({ ...contactForm, primaryContactCountryCode: e.target.value })}
+                            >
+                              {['+91','+1','+44','+61','+81','+971'].map(cc => (
+                                <option key={cc} value={cc}>{cc}</option>
+                              ))}
+                            </select>
+                            <input
+                              type="tel"
+                              className="flex-1 px-3 py-2 border rounded-lg text-gray-900 text-sm"
+                              placeholder="Your phone"
+                              value={contactForm.primaryContactPhone}
+                              onChange={e => {
+                                const value = e.target.value.replace(/[^\d]/g, '')
+                                setContactForm({...contactForm, primaryContactPhone: value})
+                              }}
+                              onFocus={(e) => {
+                                if (e.target.value === 'Not provided' || e.target.value.toLowerCase().includes('not') || e.target.value === 'N/A') {
+                                  e.target.value = ''
+                                  setContactForm({...contactForm, primaryContactPhone: ''})
+                                }
+                              }}
+                            />
+                          </div>
+                          {editingContactType === 'primary' && (
+                            <button
+                              onClick={() => {
+                                setEditingContactType(null)
+                              }}
+                              className="text-xs text-gray-600 hover:text-gray-800"
+                            >
+                              Cancel editing
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  
+                  {/* Relative Contact - In add mode, only show input fields for adding new relative */}
+                  <div className="mb-4 p-3 bg-green-50 rounded-lg border border-green-200">
+                    <label className="text-xs font-medium text-green-900 mb-2 block">
+                      {isAddMode ? 'Add New Relative Contact' : 'Relative Contact (To Inform Relatives)'}
+                    </label>
+                    {!isAddMode && hasValidRelative && editingContactType !== 'relative' ? (
+                      <div className="flex items-center justify-between p-3 bg-white rounded-lg border border-green-200">
+                        <div className="flex-1">
+                          <div className="font-medium text-gray-900">{relativeContact.name}</div>
+                          <div className="text-sm text-gray-600">{relativeContact.relationship}</div>
+                          <div className="text-sm text-gray-500">{extractPhone(relativeContact.phone).display}</div>
+                        </div>
+                        <button
+                          onClick={() => {
+                            const phoneData = extractPhone(relativeContact.phone)
+                            setContactForm({
+                              ...contactForm,
+                              relativeContactName: relativeContact.name,
+                              relativeContactPhone: phoneData.phone,
+                              relativeContactCountryCode: phoneData.countryCode,
+                              relativeContactRelation: relativeContact.relationship
+                            })
+                            setEditingContactType('relative')
+                          }}
+                          className="p-2 text-green-600 hover:bg-green-100 rounded-lg transition-colors"
+                          title="Edit relative contact"
+                        >
+                          <Edit className="w-4 h-4" />
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        <input
+                          type="text"
+                          className="w-full px-3 py-2 border rounded-lg text-gray-900 text-sm"
+                          placeholder="Relative name"
+                          value={contactForm.relativeContactName}
+                          onChange={e => setContactForm({...contactForm, relativeContactName: e.target.value})}
+                          onFocus={(e) => {
+                            if (e.target.value === 'Not provided' || e.target.value.toLowerCase().includes('not')) {
+                              e.target.value = ''
+                              setContactForm({...contactForm, relativeContactName: ''})
+                            }
+                          }}
+                        />
+                        <input
+                          type="text"
+                          className="w-full px-3 py-2 border rounded-lg text-gray-900 text-sm"
+                          placeholder="Relationship (e.g., Spouse, Parent)"
+                          value={contactForm.relativeContactRelation}
+                          onChange={e => setContactForm({...contactForm, relativeContactRelation: e.target.value})}
+                          onFocus={(e) => {
+                            if (e.target.value === 'Not provided' || e.target.value === 'Please add contact' || e.target.value.toLowerCase().includes('not')) {
+                              e.target.value = ''
+                              setContactForm({...contactForm, relativeContactRelation: ''})
+                            }
+                          }}
+                        />
+                        <div className="flex gap-2">
+                          <select
+                            className="w-20 px-2 py-2 border rounded-lg bg-white text-gray-900 text-sm"
+                            value={contactForm.relativeContactCountryCode}
+                            onChange={e => setContactForm({ ...contactForm, relativeContactCountryCode: e.target.value })}
+                          >
+                            {['+91','+1','+44','+61','+81','+971'].map(cc => (
+                              <option key={cc} value={cc}>{cc}</option>
+                            ))}
+                          </select>
+                          <input
+                            type="tel"
+                            className="flex-1 px-3 py-2 border rounded-lg text-gray-900 text-sm"
+                            placeholder="Relative phone"
+                            value={contactForm.relativeContactPhone}
+                            onChange={e => {
+                              const value = e.target.value.replace(/[^\d]/g, '')
+                              setContactForm({...contactForm, relativeContactPhone: value})
+                            }}
+                            onFocus={(e) => {
+                              if (e.target.value === 'Not provided' || e.target.value.toLowerCase().includes('not') || e.target.value === 'N/A') {
+                                e.target.value = ''
+                                setContactForm({...contactForm, relativeContactPhone: ''})
+                              }
+                            }}
+                          />
+                        </div>
+                        {!isAddMode && editingContactType === 'relative' && (
+                          <button
+                            onClick={() => {
+                              if (hasValidRelative) {
+                                setEditingContactType(null)
+                              } else {
+                                setContactForm({...contactForm, relativeContactName: '', relativeContactPhone: '', relativeContactRelation: ''})
+                              }
+                            }}
+                            className="text-xs text-gray-600 hover:text-gray-800"
+                          >
+                            Cancel editing
+                          </button>
+                        )}
+                        {isAddMode && (
+                          <button
+                            onClick={() => {
+                              setContactForm({...contactForm, relativeContactName: '', relativeContactPhone: '', relativeContactRelation: ''})
+                            }}
+                            className="text-xs text-gray-600 hover:text-gray-800"
+                          >
+                            Clear
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </>
+              )
+            })()}
+
+            <div className="flex gap-3 justify-end">
+              <button
+                onClick={() => setShowEditContactsModal(false)}
+                className="px-4 py-2 text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={async () => {
+                  try {
+                    const token = await getToken()
+                    if (!token) throw new Error('No authentication token available')
+
+                    const UPDATE_FAMILY_MEMBER = `
+                      mutation UpdateFamilyMember($id: ID!, $input: UpdateFamilyMemberInput!) {
+                        updateFamilyMember(id: $id, input: $input) {
+                          id
+                          emergencyContacts
+                        }
+                      }
+                    `
+
+                    // Get existing contacts
+                    const selectedData = emergencyData.find(e => e.familyMemberId === editingMemberId)
+                    const existingContacts = selectedData?.emergencyContacts || []
+                    
+                    // Build contacts array - merge existing with new/updated
+                    const contactsArray = []
+                    
+                    if (editingContactType === 'add') {
+                      // Add mode: keep all existing contacts and add new ones
+                      contactsArray.push(...existingContacts)
+                      
+                      // In add mode, only add primary contact if it doesn't exist
+                      const hasPrimary = existingContacts.some((c: any) => c.isPrimary)
+                      if (!hasPrimary && contactForm.primaryContactName && contactForm.primaryContactPhone) {
+                        contactsArray.push({
+                          name: contactForm.primaryContactName,
+                          phone: `${contactForm.primaryContactCountryCode}${contactForm.primaryContactPhone}`,
+                          relationship: 'Self',
+                          isPrimary: true
+                        })
+                      }
+                      
+                      // In add mode, add new relative contact if provided
+                      if (contactForm.relativeContactName && contactForm.relativeContactPhone) {
+                        contactsArray.push({
+                          name: contactForm.relativeContactName,
+                          phone: `${contactForm.relativeContactCountryCode}${contactForm.relativeContactPhone}`,
+                          relationship: contactForm.relativeContactRelation || 'Relative',
+                          isPrimary: false
+                        })
+                      }
+                    } else {
+                      // Edit mode: replace edited contact, keep others
+                      // Add existing contacts that weren't edited
+                      if (editingContactType !== 'primary') {
+                        const existingPrimary = existingContacts.find((c: any) => c.isPrimary)
+                        if (existingPrimary && existingPrimary.name && existingPrimary.name !== 'Not provided') {
+                          contactsArray.push(existingPrimary)
+                        }
+                      }
+                      if (editingContactType !== 'relative') {
+                        const existingRelative = existingContacts.find((c: any) => !c.isPrimary)
+                        if (existingRelative && existingRelative.name && existingRelative.name !== 'Not provided') {
+                          contactsArray.push(existingRelative)
+                        }
+                      }
+                      
+                      // Add updated primary contact
+                      if (contactForm.primaryContactName && contactForm.primaryContactPhone) {
+                        contactsArray.push({
+                          name: contactForm.primaryContactName,
+                          phone: `${contactForm.primaryContactCountryCode}${contactForm.primaryContactPhone}`,
+                          relationship: 'Self',
+                          isPrimary: true
+                        })
+                      }
+                      
+                      // Add updated relative contact
+                      if (contactForm.relativeContactName && contactForm.relativeContactPhone) {
+                        contactsArray.push({
+                          name: contactForm.relativeContactName,
+                          phone: `${contactForm.relativeContactCountryCode}${contactForm.relativeContactPhone}`,
+                          relationship: contactForm.relativeContactRelation || 'Relative',
+                          isPrimary: false
+                        })
+                      }
+                    }
+                    
+                    const emergencyContacts = {
+                      contacts: contactsArray
+                    }
+
+                    await graphqlRequest(UPDATE_FAMILY_MEMBER, {
+                      id: editingMemberId,
+                      input: { emergencyContacts }
+                    }, token)
+
+                    // Reload data
+                    await loadFamilyMembers()
+                    setShowEditContactsModal(false)
+                    alert('Emergency contacts updated successfully!')
+                  } catch (error) {
+                    console.error('Error updating emergency contacts:', error)
+                    alert('Failed to update emergency contacts. Please try again.')
+                  }
+                }}
+                className="px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700"
+              >
+                Save Contacts
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
