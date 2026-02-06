@@ -1,8 +1,13 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
 import Navigation from '@/components/Navigation'
+import { useUser, useAuth } from '@clerk/nextjs'
+import { graphqlRequest } from '@/lib/graphql-client'
+import { useTheme } from '@/contexts/ThemeContext'
+import { useUserProfile } from '@/contexts/UserProfileContext'
+import toast from 'react-hot-toast'
 import { 
   Settings as SettingsIcon,
   User,
@@ -18,11 +23,85 @@ import {
   EyeOff,
   Smartphone,
   Mail,
-  Globe
+  Globe,
+  Loader2,
+  Camera,
+  X
 } from 'lucide-react'
 
+// GraphQL queries and mutations
+const GET_USER_PROFILE = `
+  query GetUserProfile {
+    me {
+      id
+      name
+      email
+      phone
+      profileImage
+      preferences
+    }
+  }
+`
+
+const GET_FAMILY_MEMBERS = `
+  query GetFamilyMembers {
+    familyMembers {
+      id
+      name
+      phone
+      relationship
+      email
+    }
+  }
+`
+
+const GET_USER_PREFERENCES = `
+  query GetUserPreferences {
+    userPreferences
+  }
+`
+
+const UPDATE_USER_PROFILE = `
+  mutation UpdateUserProfile($input: UpdateUserProfileInput!) {
+    updateUserProfile(input: $input) {
+      id
+      name
+      email
+      phone
+      profileImage
+    }
+  }
+`
+
+const UPDATE_USER_PREFERENCES = `
+  mutation UpdateUserPreferences($preferences: JSON!) {
+    updateUserPreferences(preferences: $preferences) {
+      id
+      preferences
+    }
+  }
+`
+
 export default function Settings() {
+  const { user, isLoaded: userLoaded } = useUser()
+  const { getToken } = useAuth()
+  const { theme: currentTheme, setTheme: setThemeGlobal } = useTheme()
+  const { profile: userProfile, refreshProfile } = useUserProfile()
   const [activeTab, setActiveTab] = useState('profile')
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [imagePreview, setImagePreview] = useState<string>('')
+  const [imageFile, setImageFile] = useState<File | null>(null)
+  
+  // Profile state
+  const [profile, setProfile] = useState({
+    name: '',
+    email: '',
+    phone: '',
+    profileImage: ''
+  })
+
+  // Preferences state
   const [notifications, setNotifications] = useState({
     push: true,
     email: true,
@@ -31,13 +110,15 @@ export default function Settings() {
     healthAlerts: true,
     weeklyReports: false
   })
+  
   const [privacy, setPrivacy] = useState({
     dataSharing: false,
     analytics: true,
     emergencyAccess: true,
     familySharing: true
   })
-  const [theme, setTheme] = useState('light')
+  
+  const [theme, setTheme] = useState<'light' | 'dark' | 'auto'>(currentTheme)
 
   const tabs = [
     { id: 'profile', name: 'Profile', icon: User },
@@ -47,13 +128,241 @@ export default function Settings() {
     { id: 'data', name: 'Data', icon: Database },
   ]
 
-  const handleSaveSettings = () => {
-    // Save settings logic here
-    console.log('Settings saved')
+  // Load user data and preferences
+  useEffect(() => {
+    if (!userLoaded || !user) return
+
+    const loadUserData = async () => {
+      try {
+        setLoading(true)
+        const token = await getToken()
+
+        // Use profile from context if available
+        if (userProfile) {
+          // Load family members to get Self phone number
+          let selfPhoneNumber = ''
+          try {
+            const familyData = await graphqlRequest(GET_FAMILY_MEMBERS, {}, token)
+            if (familyData?.familyMembers) {
+              const selfMember = familyData.familyMembers.find((member: any) => 
+                member.relationship?.toLowerCase() === 'self'
+              )
+              if (selfMember?.phone) {
+                selfPhoneNumber = selfMember.phone
+              }
+            }
+          } catch (err) {
+            console.log('Could not load family members for phone number')
+          }
+
+          const phoneNumber = selfPhoneNumber || userProfile.phone || ''
+          setProfile({
+            name: userProfile.name,
+            email: userProfile.email,
+            phone: phoneNumber,
+            profileImage: userProfile.profileImage
+          })
+          setImagePreview(userProfile.profileImage)
+        } else {
+          // Load user profile from backend
+          const profileData = await graphqlRequest(GET_USER_PROFILE, {}, token)
+          
+          // Load family members to get Self phone number
+          let selfPhoneNumber = ''
+          try {
+            const familyData = await graphqlRequest(GET_FAMILY_MEMBERS, {}, token)
+            if (familyData?.familyMembers) {
+              const selfMember = familyData.familyMembers.find((member: any) => 
+                member.relationship?.toLowerCase() === 'self'
+              )
+              if (selfMember?.phone) {
+                selfPhoneNumber = selfMember.phone
+              }
+            }
+          } catch (err) {
+            console.log('Could not load family members for phone number')
+          }
+          
+          if (profileData?.me) {
+            const userData = profileData.me
+            const phoneNumber = selfPhoneNumber || userData.phone || user.primaryPhoneNumber?.phoneNumber || ''
+            const profileImage = userData.profileImage || user.imageUrl || ''
+            
+            setProfile({
+              name: userData.name || user.firstName || user.fullName || '',
+              email: userData.email || user.primaryEmailAddress?.emailAddress || '',
+              phone: phoneNumber,
+              profileImage: profileImage
+            })
+            setImagePreview(profileImage)
+          } else {
+            // Fallback to Clerk data if backend doesn't have it
+            const phoneNumber = selfPhoneNumber || user.primaryPhoneNumber?.phoneNumber || ''
+            const profileImage = user.imageUrl || ''
+            
+            setProfile({
+              name: user.fullName || user.firstName || '',
+              email: user.primaryEmailAddress?.emailAddress || '',
+              phone: phoneNumber,
+              profileImage: profileImage
+            })
+            setImagePreview(profileImage)
+          }
+        }
+
+        // Load user preferences
+        try {
+          const preferencesData = await graphqlRequest(GET_USER_PREFERENCES, {}, token)
+          if (preferencesData?.userPreferences) {
+            const prefs = preferencesData.userPreferences
+            if (prefs.notifications) {
+              setNotifications(prefs.notifications)
+            }
+            if (prefs.privacy) {
+              setPrivacy(prefs.privacy)
+            }
+            if (prefs.appearance?.theme) {
+              const savedTheme = prefs.appearance.theme as 'light' | 'dark' | 'auto'
+              setTheme(savedTheme)
+              setThemeGlobal(savedTheme)
+            }
+          }
+        } catch (prefError) {
+          console.log('Preferences not found, using defaults')
+        }
+      } catch (error: any) {
+        console.error('Error loading user data:', error)
+        toast.error('Failed to load user data')
+        // Fallback to Clerk data
+        if (user) {
+          const profileImage = user.imageUrl || ''
+          setProfile({
+            name: user.fullName || user.firstName || '',
+            email: user.primaryEmailAddress?.emailAddress || '',
+            phone: user.primaryPhoneNumber?.phoneNumber || '',
+            profileImage: profileImage
+          })
+          setImagePreview(profileImage)
+        }
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    loadUserData()
+  }, [userLoaded, user, getToken, userProfile])
+
+  const handleSaveSettings = async () => {
+    if (!user) {
+      toast.error('Please sign in to save settings')
+      return
+    }
+
+    try {
+      setSaving(true)
+      const token = await getToken()
+
+      // Save profile if on profile tab
+      if (activeTab === 'profile') {
+        // If there's an image file, upload it first
+        let imageUrl = profile.profileImage
+        if (imageFile) {
+          // For now, we'll use the image preview URL
+          // In production, you'd upload to a storage service (S3, Cloudinary, etc.)
+          imageUrl = imagePreview
+        }
+        
+        await graphqlRequest(UPDATE_USER_PROFILE, {
+          input: {
+            name: profile.name,
+            phone: profile.phone,
+            profileImage: imageUrl
+          }
+        }, token)
+        
+        // Update Self family member phone number if it exists
+        try {
+          const familyData = await graphqlRequest(GET_FAMILY_MEMBERS, {}, token)
+          if (familyData?.familyMembers) {
+            const selfMember = familyData.familyMembers.find((member: any) => 
+              member.relationship?.toLowerCase() === 'self'
+            )
+            if (selfMember && profile.phone) {
+              const UPDATE_FAMILY_MEMBER = `
+                mutation UpdateFamilyMember($id: ID!, $input: UpdateFamilyMemberInput!) {
+                  updateFamilyMember(id: $id, input: $input) {
+                    id
+                    phone
+                  }
+                }
+              `
+              await graphqlRequest(UPDATE_FAMILY_MEMBER, {
+                id: selfMember.id,
+                input: { phone: profile.phone }
+              }, token)
+            }
+          }
+        } catch (err) {
+          console.log('Could not update Self family member phone number')
+        }
+        
+        // Refresh profile context
+        await refreshProfile()
+        
+        toast.success('Profile updated successfully')
+        setImageFile(null) // Clear file after saving
+      }
+
+      // Save preferences
+      const preferencesToSave: any = {}
+      
+      if (activeTab === 'notifications') {
+        preferencesToSave.notifications = notifications
+      } else if (activeTab === 'privacy') {
+        preferencesToSave.privacy = privacy
+      } else       if (activeTab === 'appearance') {
+        preferencesToSave.appearance = { theme }
+        // Apply theme immediately
+        setThemeGlobal(theme)
+      } else if (activeTab === 'profile') {
+        // Save all preferences when saving profile
+        preferencesToSave.notifications = notifications
+        preferencesToSave.privacy = privacy
+        preferencesToSave.appearance = { theme }
+        // Apply theme immediately
+        setThemeGlobal(theme)
+      }
+
+      if (Object.keys(preferencesToSave).length > 0) {
+        await graphqlRequest(UPDATE_USER_PREFERENCES, {
+          preferences: preferencesToSave
+        }, token)
+        
+        if (activeTab !== 'profile') {
+          toast.success('Settings saved successfully')
+        }
+      }
+    } catch (error: any) {
+      console.error('Error saving settings:', error)
+      toast.error(error.message || 'Failed to save settings')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (!userLoaded || loading) {
+    return (
+      <main className="min-h-screen bg-gradient-to-br from-gray-50 to-blue-50 dark:from-gray-900 dark:to-gray-800 flex items-center justify-center">
+        <div className="text-center">
+          <Loader2 className="w-12 h-12 animate-spin text-primary-600 dark:text-primary-400 mx-auto mb-4" />
+          <p className="text-gray-600 dark:text-gray-400">Loading settings...</p>
+        </div>
+      </main>
+    )
   }
 
   return (
-    <main className="min-h-screen bg-gradient-to-br from-gray-50 to-blue-50 pb-8">
+    <main className="min-h-screen bg-gradient-to-br from-gray-50 to-blue-50 dark:from-gray-900 dark:to-gray-800 pb-8">
       <Navigation />
       
       <div className="pt-24 px-4 sm:px-6 lg:px-8">
@@ -68,10 +377,10 @@ export default function Settings() {
             <div className="inline-flex items-center justify-center w-16 h-16 bg-primary-100 rounded-2xl mb-4">
               <SettingsIcon className="w-8 h-8 text-primary-600" />
             </div>
-            <h1 className="text-2xl lg:text-3xl font-bold text-gray-900 mb-2">
+            <h1 className="text-2xl lg:text-3xl font-bold text-gray-900 dark:text-white mb-2">
               Settings
             </h1>
-            <p className="text-lg text-gray-600">
+            <p className="text-lg text-gray-600 dark:text-gray-400">
               Manage your account preferences and privacy settings
             </p>
           </motion.div>
@@ -84,8 +393,8 @@ export default function Settings() {
               transition={{ duration: 0.6, delay: 0.2 }}
               className="lg:col-span-1"
             >
-              <div className="bg-white rounded-xl p-6 shadow-lg">
-                <h3 className="text-lg font-semibold text-gray-900 mb-4">Settings</h3>
+              <div className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow-lg">
+                <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">Settings</h3>
                 <nav className="space-y-2">
                   {tabs.map((tab) => {
                     const Icon = tab.icon
@@ -95,8 +404,8 @@ export default function Settings() {
                         onClick={() => setActiveTab(tab.id)}
                         className={`w-full flex items-center space-x-3 px-3 py-2 rounded-lg font-medium transition-colors text-sm ${
                           activeTab === tab.id
-                            ? 'bg-primary-100 text-primary-700'
-                            : 'text-gray-600 hover:text-primary-600 hover:bg-gray-50'
+                            ? 'bg-primary-100 dark:bg-primary-900/30 text-primary-700 dark:text-primary-400'
+                            : 'text-gray-600 dark:text-gray-400 hover:text-primary-600 dark:hover:text-primary-400 hover:bg-gray-50 dark:hover:bg-gray-700'
                         }`}
                       >
                         <Icon className="w-4 h-4" />
@@ -115,44 +424,102 @@ export default function Settings() {
               transition={{ duration: 0.6, delay: 0.4 }}
               className="lg:col-span-3"
             >
-              <div className="bg-white rounded-xl p-6 shadow-lg">
+              <div className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow-lg">
                 {/* Profile Tab */}
                 {activeTab === 'profile' && (
                   <div className="space-y-6">
-                    <h2 className="text-xl font-semibold text-gray-900">Profile Settings</h2>
+                    <h2 className="text-xl font-semibold text-gray-900 dark:text-white">Profile Settings</h2>
                     
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                       <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">Full Name</label>
+                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Full Name</label>
                         <input
                           type="text"
-                          defaultValue="Divya"
-                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500"
+                          value={profile.name}
+                          onChange={(e) => setProfile({ ...profile, name: e.target.value })}
+                          className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-primary-500 dark:focus:ring-primary-400"
                         />
                       </div>
                       <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">Email</label>
+                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Email</label>
                         <input
                           type="email"
-                          defaultValue="divya@example.com"
-                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500"
+                          value={profile.email}
+                          disabled
+                          className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-gray-50 dark:bg-gray-700 text-gray-500 dark:text-gray-400 cursor-not-allowed"
                         />
+                        <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">Email cannot be changed</p>
                       </div>
                       <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">Phone</label>
+                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Phone</label>
                         <input
                           type="tel"
-                          defaultValue="+1 (555) 123-4567"
-                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500"
+                          value={profile.phone}
+                          onChange={(e) => setProfile({ ...profile, phone: e.target.value })}
+                          placeholder="+1 (555) 123-4567"
+                          className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-primary-500 dark:focus:ring-primary-400"
                         />
+                        <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">Phone number from Emergency ID (Self)</p>
                       </div>
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">Date of Birth</label>
-                        <input
-                          type="date"
-                          defaultValue="1990-01-01"
-                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500"
-                        />
+                    </div>
+
+                    {/* Profile Image Upload */}
+                    <div className="mt-6">
+                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Profile Image</label>
+                      <div className="flex items-center space-x-4">
+                        <div className="relative">
+                          <div className="w-24 h-24 rounded-full overflow-hidden bg-gray-200 dark:bg-gray-700 border-2 border-gray-300 dark:border-gray-600 flex items-center justify-center">
+                            {imagePreview ? (
+                              <img 
+                                src={imagePreview} 
+                                alt="Profile" 
+                                className="w-full h-full object-cover"
+                                onError={(e) => {
+                                  (e.target as HTMLImageElement).src = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"%3E%3Cpath d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"%3E%3C/path%3E%3Ccircle cx="12" cy="7" r="4"%3E%3C/circle%3E%3C/svg%3E'
+                                }}
+                              />
+                            ) : (
+                              <User className="w-12 h-12 text-gray-400 dark:text-gray-500" />
+                            )}
+                          </div>
+                          {imagePreview && (
+                            <button
+                              onClick={() => {
+                                setImagePreview('')
+                                setProfile({ ...profile, profileImage: '' })
+                                setImageFile(null)
+                              }}
+                              className="absolute -top-2 -right-2 w-6 h-6 bg-red-500 text-white rounded-full flex items-center justify-center hover:bg-red-600 transition-colors"
+                            >
+                              <X className="w-4 h-4" />
+                            </button>
+                          )}
+                        </div>
+                        <div className="flex-1">
+                          <label className="inline-flex items-center px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors cursor-pointer">
+                            <Camera className="w-4 h-4 mr-2" />
+                            {imagePreview ? 'Change Image' : 'Upload Image'}
+                            <input
+                              type="file"
+                              accept="image/*"
+                              className="hidden"
+                              onChange={(e) => {
+                                const file = e.target.files?.[0]
+                                if (file) {
+                                  setImageFile(file)
+                                  const reader = new FileReader()
+                                  reader.onloadend = () => {
+                                    const result = reader.result as string
+                                    setImagePreview(result)
+                                    setProfile({ ...profile, profileImage: result })
+                                  }
+                                  reader.readAsDataURL(file)
+                                }
+                              }}
+                            />
+                          </label>
+                          <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">JPG, PNG or GIF. Max size 5MB</p>
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -161,19 +528,19 @@ export default function Settings() {
                 {/* Notifications Tab */}
                 {activeTab === 'notifications' && (
                   <div className="space-y-6">
-                    <h2 className="text-xl font-semibold text-gray-900">Notification Settings</h2>
+                    <h2 className="text-xl font-semibold text-gray-900 dark:text-white">Notification Settings</h2>
                     
                     <div className="space-y-4">
                       {Object.entries(notifications).map(([key, value]) => (
-                        <div key={key} className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
+                        <div key={key} className="flex items-center justify-between p-4 bg-gray-50 dark:bg-gray-700 rounded-lg">
                           <div className="flex items-center space-x-3">
-                            {key === 'push' && <Smartphone className="w-5 h-5 text-gray-600" />}
-                            {key === 'email' && <Mail className="w-5 h-5 text-gray-600" />}
-                            {key === 'sms' && <Smartphone className="w-5 h-5 text-gray-600" />}
-                            {key === 'reminders' && <Bell className="w-5 h-5 text-gray-600" />}
-                            {key === 'healthAlerts' && <Shield className="w-5 h-5 text-gray-600" />}
-                            {key === 'weeklyReports' && <Globe className="w-5 h-5 text-gray-600" />}
-                            <span className="font-medium text-gray-900 capitalize">
+                            {key === 'push' && <Smartphone className="w-5 h-5 text-gray-600 dark:text-gray-400" />}
+                            {key === 'email' && <Mail className="w-5 h-5 text-gray-600 dark:text-gray-400" />}
+                            {key === 'sms' && <Smartphone className="w-5 h-5 text-gray-600 dark:text-gray-400" />}
+                            {key === 'reminders' && <Bell className="w-5 h-5 text-gray-600 dark:text-gray-400" />}
+                            {key === 'healthAlerts' && <Shield className="w-5 h-5 text-gray-600 dark:text-gray-400" />}
+                            {key === 'weeklyReports' && <Globe className="w-5 h-5 text-gray-600 dark:text-gray-400" />}
+                            <span className="font-medium text-gray-900 dark:text-white capitalize">
                               {key.replace(/([A-Z])/g, ' $1').trim()}
                             </span>
                           </div>
@@ -198,14 +565,14 @@ export default function Settings() {
                 {/* Privacy Tab */}
                 {activeTab === 'privacy' && (
                   <div className="space-y-6">
-                    <h2 className="text-xl font-semibold text-gray-900">Privacy Settings</h2>
+                    <h2 className="text-xl font-semibold text-gray-900 dark:text-white">Privacy Settings</h2>
                     
                     <div className="space-y-4">
                       {Object.entries(privacy).map(([key, value]) => (
-                        <div key={key} className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
+                        <div key={key} className="flex items-center justify-between p-4 bg-gray-50 dark:bg-gray-700 rounded-lg">
                           <div className="flex items-center space-x-3">
-                            <Shield className="w-5 h-5 text-gray-600" />
-                            <span className="font-medium text-gray-900 capitalize">
+                            <Shield className="w-5 h-5 text-gray-600 dark:text-gray-400" />
+                            <span className="font-medium text-gray-900 dark:text-white capitalize">
                               {key.replace(/([A-Z])/g, ' $1').trim()}
                             </span>
                           </div>
@@ -230,20 +597,23 @@ export default function Settings() {
                 {/* Appearance Tab */}
                 {activeTab === 'appearance' && (
                   <div className="space-y-6">
-                    <h2 className="text-xl font-semibold text-gray-900">Appearance</h2>
+                    <h2 className="text-xl font-semibold text-gray-900 dark:text-white">Appearance</h2>
                     
                     <div className="space-y-4">
-                      <div className="p-4 bg-gray-50 rounded-lg">
-                        <label className="block text-sm font-medium text-gray-700 mb-3">Theme</label>
+                      <div className="p-4 bg-gray-50 dark:bg-gray-700 rounded-lg">
+                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">Theme</label>
                         <div className="flex space-x-4">
-                          {['light', 'dark', 'auto'].map((themeOption) => (
+                          {(['light', 'dark', 'auto'] as const).map((themeOption) => (
                             <button
                               key={themeOption}
-                              onClick={() => setTheme(themeOption)}
+                              onClick={() => {
+                                setTheme(themeOption)
+                                setThemeGlobal(themeOption)
+                              }}
                               className={`px-4 py-2 rounded-lg font-medium transition-colors ${
                                 theme === themeOption
-                                  ? 'bg-primary-600 text-white'
-                                  : 'bg-white text-gray-700 border border-gray-300'
+                                  ? 'bg-primary-600 text-white dark:bg-primary-500'
+                                  : 'bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 border border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700'
                               }`}
                             >
                               {themeOption.charAt(0).toUpperCase() + themeOption.slice(1)}
@@ -258,7 +628,7 @@ export default function Settings() {
                 {/* Data Tab */}
                 {activeTab === 'data' && (
                   <div className="space-y-6">
-                    <h2 className="text-xl font-semibold text-gray-900">Data Management</h2>
+                    <h2 className="text-xl font-semibold text-gray-900 dark:text-white">Data Management</h2>
                     
                     <div className="space-y-4">
                       <div className="p-4 bg-gray-50 rounded-lg">
@@ -292,13 +662,23 @@ export default function Settings() {
                 )}
 
                 {/* Save Button */}
-                <div className="mt-8 pt-6 border-t border-gray-200">
+                <div className="mt-8 pt-6 border-t border-gray-200 dark:border-gray-700">
                   <button
                     onClick={handleSaveSettings}
-                    className="inline-flex items-center px-6 py-3 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors font-medium"
+                    disabled={saving}
+                    className="inline-flex items-center px-6 py-3 bg-primary-600 dark:bg-primary-500 text-white rounded-lg hover:bg-primary-700 dark:hover:bg-primary-600 transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    <Save className="w-5 h-5 mr-2" />
-                    Save Settings
+                    {saving ? (
+                      <>
+                        <Loader2 className="w-5 h-5 mr-2 animate-spin" />
+                        Saving...
+                      </>
+                    ) : (
+                      <>
+                        <Save className="w-5 h-5 mr-2" />
+                        Save Settings
+                      </>
+                    )}
                   </button>
                 </div>
               </div>
@@ -309,18 +689,3 @@ export default function Settings() {
     </main>
   )
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { motion } from 'framer-motion'
 import { usePathname, useRouter } from 'next/navigation'
 import { useUser, useClerk } from '@clerk/nextjs'
+import { useUserProfile } from '@/contexts/UserProfileContext'
 import { 
   Menu, 
   X, 
@@ -27,6 +28,11 @@ export default function Navigation() {
   const router = useRouter()
   const { isSignedIn, user, isLoaded } = useUser()
   const { signOut } = useClerk()
+  const { profile: userProfile } = useUserProfile()
+  
+  // Use profile image from backend if available, otherwise use Clerk
+  const profileImage = userProfile?.profileImage || user?.imageUrl || ''
+  const displayName = userProfile?.name || user?.firstName || user?.emailAddresses[0]?.emailAddress || 'User'
 
   const handleSignOut = async () => {
     try {
@@ -47,7 +53,7 @@ export default function Navigation() {
   ]
 
   return (
-    <nav className="fixed top-0 w-full z-50 bg-white/95 backdrop-blur-md border-b border-gray-200 shadow-sm">
+    <nav className="fixed top-0 w-full z-50 bg-white/95 dark:bg-gray-900/95 backdrop-blur-md border-b border-gray-200 dark:border-gray-800 shadow-sm">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex justify-between items-center h-16">
           {/* Logo */}
@@ -59,7 +65,7 @@ export default function Navigation() {
             <div className="w-8 h-8 bg-gradient-to-r from-blue-600 to-blue-800 rounded-lg flex items-center justify-center">
               <Shield className="w-5 h-5 text-white" />
             </div>
-            <span className="text-xl font-bold text-gray-900">AURAA</span>
+            <span className="text-xl font-bold text-gray-900 dark:text-white">AURAA</span>
           </Link>
 
           {/* Desktop Navigation */}
@@ -73,8 +79,8 @@ export default function Navigation() {
                   href={item.href}
                   className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors ${
                     isActive
-                      ? 'bg-blue-50 text-blue-700'
-                      : 'text-gray-700 hover:text-blue-600 hover:bg-gray-50'
+                      ? 'bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400'
+                      : 'text-gray-700 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-gray-50 dark:hover:bg-gray-800'
                   }`}
                   onClick={() => setIsOpen(false)}
                 >
@@ -90,26 +96,26 @@ export default function Navigation() {
             {isLoaded && isSignedIn && user ? (
               <>
                 {/* User Info */}
-                <div className="flex items-center gap-2 px-3 py-2 text-gray-700">
-                  {user.imageUrl ? (
+                <div className="flex items-center gap-2 px-3 py-2 text-gray-700 dark:text-gray-300">
+                  {profileImage ? (
                     <img 
-                      src={user.imageUrl} 
-                      alt={user.firstName || 'User'} 
-                      className="w-8 h-8 rounded-full"
+                      src={profileImage} 
+                      alt={displayName} 
+                      className="w-8 h-8 rounded-full object-cover"
                     />
                   ) : (
-                    <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center">
-                      <User className="w-5 h-5 text-blue-600" />
+                    <div className="w-8 h-8 rounded-full bg-blue-100 dark:bg-blue-900 flex items-center justify-center">
+                      <User className="w-5 h-5 text-blue-600 dark:text-blue-400" />
                     </div>
                   )}
                   <span className="text-sm font-medium">
-                    {user.firstName || user.emailAddresses[0]?.emailAddress || 'User'}
+                    {displayName}
                   </span>
                 </div>
                 {/* Logout Button */}
                 <button
                   onClick={handleSignOut}
-                  className="flex items-center gap-2 px-3 py-2 text-gray-700 hover:text-red-600 transition-colors rounded-lg hover:bg-red-50"
+                  className="flex items-center gap-2 px-3 py-2 text-gray-700 dark:text-gray-300 hover:text-red-600 dark:hover:text-red-400 transition-colors rounded-lg hover:bg-red-50 dark:hover:bg-red-900/20"
                 >
                   <LogOut className="w-4 h-4" />
                   <span className="text-sm">Sign Out</span>
@@ -119,7 +125,7 @@ export default function Navigation() {
               <>
                 <Link
                   href="/login"
-                  className="flex items-center gap-2 px-3 py-2 text-gray-700 hover:text-blue-600 transition-colors rounded-lg hover:bg-gray-50"
+                  className="flex items-center gap-2 px-3 py-2 text-gray-700 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400 transition-colors rounded-lg hover:bg-gray-50 dark:hover:bg-gray-800"
                 >
                   <LogIn className="w-4 h-4" />
                   <span className="text-sm">Sign In</span>
@@ -138,7 +144,7 @@ export default function Navigation() {
           {/* Mobile menu button */}
           <button
             onClick={() => setIsOpen(!isOpen)}
-            className="md:hidden p-2 rounded-lg text-gray-700 hover:text-blue-600 hover:bg-gray-50 transition-colors"
+            className="md:hidden p-2 rounded-lg text-gray-700 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
             aria-label="Toggle menu"
           >
             {isOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
@@ -152,7 +158,7 @@ export default function Navigation() {
             animate={{ opacity: 1, height: 'auto' }}
             exit={{ opacity: 0, height: 0 }}
             transition={{ duration: 0.2 }}
-            className="md:hidden border-t border-gray-200 bg-white"
+            className="md:hidden border-t border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900"
           >
             <div className="py-2 space-y-1">
               {navItems.map((item) => {
@@ -164,8 +170,8 @@ export default function Navigation() {
                     href={item.href}
                     className={`flex items-center gap-3 px-4 py-3 rounded-lg mx-2 transition-colors ${
                       isActive
-                        ? 'bg-blue-50 text-blue-700'
-                        : 'text-gray-700 hover:text-blue-600 hover:bg-gray-50'
+                        ? 'bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400'
+                        : 'text-gray-700 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-gray-50 dark:hover:bg-gray-800'
                     }`}
                     onClick={() => {
                       setIsOpen(false)
@@ -177,28 +183,28 @@ export default function Navigation() {
                 )
               })}
               
-              <div className="pt-2 border-t border-gray-200 space-y-1 mx-2">
+              <div className="pt-2 border-t border-gray-200 dark:border-gray-800 space-y-1 mx-2">
                 {isLoaded && isSignedIn && user ? (
                   <>
                     {/* User Info Mobile */}
-                    <div className="flex items-center gap-3 px-4 py-3 text-gray-700">
-                      {user.imageUrl ? (
+                    <div className="flex items-center gap-3 px-4 py-3 text-gray-700 dark:text-gray-300">
+                      {profileImage ? (
                         <img 
-                          src={user.imageUrl} 
-                          alt={user.firstName || 'User'} 
-                          className="w-8 h-8 rounded-full"
+                          src={profileImage} 
+                          alt={displayName} 
+                          className="w-8 h-8 rounded-full object-cover"
                         />
                       ) : (
-                        <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center">
-                          <User className="w-5 h-5 text-blue-600" />
+                        <div className="w-8 h-8 rounded-full bg-blue-100 dark:bg-blue-900 flex items-center justify-center">
+                          <User className="w-5 h-5 text-blue-600 dark:text-blue-400" />
                         </div>
                       )}
                       <div className="flex-1">
                         <p className="font-medium text-sm">
-                          {user.firstName || user.emailAddresses[0]?.emailAddress || 'User'}
+                          {displayName}
                         </p>
-                        {user.emailAddresses[0]?.emailAddress && user.firstName && (
-                          <p className="text-xs text-gray-500">{user.emailAddresses[0].emailAddress}</p>
+                        {userProfile?.email && displayName !== userProfile.email && (
+                          <p className="text-xs text-gray-500 dark:text-gray-400">{userProfile.email}</p>
                         )}
                       </div>
                     </div>
@@ -208,7 +214,7 @@ export default function Navigation() {
                         setIsOpen(false)
                         handleSignOut()
                       }}
-                      className="flex items-center gap-3 px-4 py-3 text-red-600 hover:text-red-700 hover:bg-red-50 rounded-lg transition-colors w-full"
+                      className="flex items-center gap-3 px-4 py-3 text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors w-full"
                     >
                       <LogOut className="w-5 h-5" />
                       <span>Sign Out</span>
@@ -218,7 +224,7 @@ export default function Navigation() {
                   <>
                     <Link
                       href="/login"
-                      className="flex items-center gap-3 px-4 py-3 text-gray-700 hover:text-blue-600 hover:bg-gray-50 rounded-lg transition-colors"
+                      className="flex items-center gap-3 px-4 py-3 text-gray-700 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-gray-50 dark:hover:bg-gray-800 rounded-lg transition-colors"
                       onClick={() => setIsOpen(false)}
                     >
                       <LogIn className="w-5 h-5" />

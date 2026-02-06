@@ -17,6 +17,7 @@ model User {
   name          String
   phone         String?
   profileImage  String?
+  preferences   Json?    // User preferences (notifications, privacy, appearance, etc.)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 

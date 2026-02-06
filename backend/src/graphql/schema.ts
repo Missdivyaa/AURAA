@@ -11,6 +11,7 @@ export const typeDefs = gql`
     name: String!
     phone: String
     profileImage: String
+    preferences: JSON
     createdAt: DateTime!
     updatedAt: DateTime!
     familyMembers: [FamilyMember!]!

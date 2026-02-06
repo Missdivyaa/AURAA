@@ -15,7 +15,7 @@
     "db:seed": "prisma db seed"
   },
   "dependencies": {
-    "@clerk/nextjs": "^5.7.5",
+    "@clerk/nextjs": "^6.37.3",
     "@prisma/client": "^6.16.2",
     "@types/node": "^20",
     "@types/pg": "^8.15.5",

@@ -4,6 +4,8 @@ import './globals.css'
 import { Toaster } from 'react-hot-toast'
 import { ClerkProvider } from '@clerk/nextjs'
 import NotificationProvider from '@/components/NotificationProvider'
+import { ThemeProvider } from '@/contexts/ThemeContext'
+import { UserProfileProvider } from '@/contexts/UserProfileContext'
 
 const inter = Inter({ subsets: ['latin'] })
 
@@ -31,7 +33,7 @@ export default function RootLayout({
   children: React.ReactNode
 }) {
   return (
-    <ClerkProvider>
+    <ClerkProvider dynamic>
       <html lang="en">
         <head>
           <link rel="manifest" href="/manifest.json" />
@@ -41,19 +43,24 @@ export default function RootLayout({
           <meta name="apple-mobile-web-app-title" content="AURAA" />
         </head>
         <body className={inter.className}>
-          <NotificationProvider>
-            {children}
-            <Toaster 
-              position="top-right"
-              toastOptions={{
-                duration: 4000,
-                style: {
-                  background: '#363636',
-                  color: '#fff',
-                },
-              }}
-            />
-          </NotificationProvider>
+          <ThemeProvider>
+            <UserProfileProvider>
+              <NotificationProvider>
+                {children}
+                <Toaster 
+                  position="top-right"
+                  toastOptions={{
+                    duration: 4000,
+                    className: 'dark:bg-gray-800 dark:text-white',
+                    style: {
+                      background: '#363636',
+                      color: '#fff',
+                    },
+                  }}
+                />
+              </NotificationProvider>
+            </UserProfileProvider>
+          </ThemeProvider>
         </body>
       </html>
     </ClerkProvider>

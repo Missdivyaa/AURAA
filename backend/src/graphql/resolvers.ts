@@ -325,11 +325,27 @@ export const resolvers = {
 
       if (!user) throw new Error('User not found');
       
-      // Return user preferences (can be extended)
+      // Return user preferences with defaults
+      const preferences = user.preferences as any || {};
       return {
-        notifications: true,
-        theme: 'light',
-        language: 'en'
+        notifications: preferences.notifications || {
+          push: true,
+          email: true,
+          sms: false,
+          reminders: true,
+          healthAlerts: true,
+          weeklyReports: false
+        },
+        privacy: preferences.privacy || {
+          dataSharing: false,
+          analytics: true,
+          emergencyAccess: true,
+          familySharing: true
+        },
+        appearance: preferences.appearance || {
+          theme: 'light'
+        },
+        ...preferences
       };
     },
 
@@ -2566,12 +2582,21 @@ Return ONLY valid JSON, no additional text.`;
     updateUserPreferences: async (_: any, { preferences }: { preferences: any }, { userContext }: { userContext: UserContext }) => {
       if (!userContext) throw new Error('Authentication required');
       
-      // For now, we'll store preferences in a simple way
-      // In a real app, you might want a separate preferences table
+      // Get current user to merge preferences
+      const currentUser = await prisma.user.findUnique({
+        where: { id: userContext.userId }
+      });
+
+      if (!currentUser) throw new Error('User not found');
+
+      // Merge existing preferences with new ones
+      const existingPreferences = currentUser.preferences as any || {};
+      const mergedPreferences = { ...existingPreferences, ...preferences };
+
       return await prisma.user.update({
         where: { id: userContext.userId },
         data: { 
-          // Store preferences in a JSON field or separate table
+          preferences: mergedPreferences
         },
         include: {
           familyMembers: true,
