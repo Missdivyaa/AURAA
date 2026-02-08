@@ -65,12 +65,16 @@ export function UserProfileProvider({ children }: { children: React.ReactNode })
       
       if (profileData?.me) {
         const userData = profileData.me
+        // Use profileImage from backend if property exists (even if empty string), otherwise fallback to Clerk
+        const profileImage = userData.hasOwnProperty('profileImage') 
+          ? userData.profileImage 
+          : (user.imageUrl || '')
         setProfile({
           id: userData.id,
           name: userData.name || user.fullName || user.firstName || '',
           email: userData.email || user.primaryEmailAddress?.emailAddress || '',
           phone: userData.phone || user.primaryPhoneNumber?.phoneNumber || '',
-          profileImage: userData.profileImage || user.imageUrl || ''
+          profileImage: profileImage
         })
       } else {
         // Fallback to Clerk data

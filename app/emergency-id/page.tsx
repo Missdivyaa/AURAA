@@ -529,7 +529,7 @@ export default function EmergencyID() {
   const selectedEmergencyData = emergencyData.find(d => d.familyMemberId === selectedMember)
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50 pb-8">
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50 dark:from-gray-900 dark:via-gray-800 dark:to-gray-900 pb-8">
       <Navigation />
       
       <div className="pt-20 px-4 sm:px-6 lg:px-8">
@@ -551,13 +551,13 @@ export default function EmergencyID() {
         >
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-4">
-              <label className="text-base font-semibold text-gray-900 whitespace-nowrap">
+              <label className="text-base font-semibold text-gray-900 dark:text-white whitespace-nowrap">
                 Select Family Member:
               </label>
             <div className="relative">
               <button
                 onClick={() => setShowDropdown(!showDropdown)}
-                className="flex items-center space-x-3 px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 bg-white hover:bg-gray-50 transition-colors min-w-[200px]"
+                className="flex items-center space-x-3 px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 dark:focus:ring-primary-400 bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors min-w-[200px]"
               >
                 {selectedMemberData && (
                   <>
@@ -566,16 +566,16 @@ export default function EmergencyID() {
                       alt={selectedMemberData.name}
                       className="w-6 h-6 rounded-full"
                     />
-                    <span className="text-sm font-medium text-gray-900">
+                    <span className="text-sm font-medium text-gray-900 dark:text-white">
                       {selectedMemberData.name} ({selectedMemberData.relationship})
                     </span>
                   </>
                 )}
-                <ChevronDown className={`w-4 h-4 text-gray-400 transition-transform ${showDropdown ? 'rotate-180' : ''}`} />
+                <ChevronDown className={`w-4 h-4 text-gray-400 dark:text-gray-500 transition-transform ${showDropdown ? 'rotate-180' : ''}`} />
               </button>
               
               {showDropdown && (
-                <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg z-10">
+                <div className="absolute top-full left-0 right-0 mt-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg z-10">
                   {familyMembers.map((member) => (
                     <button
                       key={member.id}
@@ -583,8 +583,8 @@ export default function EmergencyID() {
                         setSelectedMember(member.id)
                         setShowDropdown(false)
                       }}
-                      className={`w-full flex items-center space-x-3 px-4 py-3 text-left hover:bg-gray-50 transition-colors ${
-                        selectedMember === member.id ? 'bg-primary-50 text-primary-700' : 'text-gray-900'
+                      className={`w-full flex items-center space-x-3 px-4 py-3 text-left hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors ${
+                        selectedMember === member.id ? 'bg-primary-50 dark:bg-primary-900/30 text-primary-700 dark:text-primary-400' : 'text-gray-900 dark:text-white'
                       }`}
                     >
                       <img
@@ -594,7 +594,7 @@ export default function EmergencyID() {
                       />
                       <div>
                         <div className="text-sm font-medium">{member.name}</div>
-                        <div className="text-xs text-gray-500">{member.relationship} - Age {member.age}</div>
+                        <div className="text-xs text-gray-500 dark:text-gray-400">{member.relationship} - Age {member.age}</div>
                       </div>
                     </button>
                   ))}
@@ -625,12 +625,12 @@ export default function EmergencyID() {
             className="space-y-8"
           >
             {/* QR Code Card */}
-            <div className="bg-white rounded-3xl p-8 shadow-xl border border-gray-200">
+            <div className="bg-white dark:bg-gray-800 rounded-3xl p-8 shadow-xl border border-gray-200 dark:border-gray-700">
               <div className="text-center mb-6">
-                <h2 className="text-2xl font-bold text-gray-900 mb-2">
+                <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">
                   Emergency QR Code - {selectedMemberData.name}
                 </h2>
-                <p className="text-gray-600">
+                <p className="text-gray-600 dark:text-gray-400">
                   Scan this QR code to access complete health information
                 </p>
               </div>
@@ -638,7 +638,7 @@ export default function EmergencyID() {
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
                 {/* QR Code - Left Side */}
                 <div className="text-center">
-                  <div className="inline-block p-6 bg-white border-2 border-gray-200 rounded-2xl shadow-lg">
+                  <div className="inline-block p-6 bg-white dark:bg-gray-900 border-2 border-gray-200 dark:border-gray-700 rounded-2xl shadow-lg">
                     <img
                       src={generateQRCodeUrl(generateQRData(selectedMemberData), 300)}
                       alt={`Emergency QR Code for ${selectedMemberData.name}`}
@@ -666,74 +666,74 @@ export default function EmergencyID() {
 
                 {/* User Details - Right Side */}
                 <div>
-                  <h3 className="text-lg font-bold text-gray-900 mb-4">Health Information Summary</h3>
+                  <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-4">Health Information Summary</h3>
                   
                   <div className="space-y-4">
                     {/* Basic Info */}
-                    <div className="bg-gray-50 rounded-xl p-4">
-                      <h4 className="font-semibold text-gray-900 mb-2 flex items-center space-x-2">
+                    <div className="bg-gray-50 dark:bg-gray-700/50 rounded-xl p-4">
+                      <h4 className="font-semibold text-gray-900 dark:text-white mb-2 flex items-center space-x-2">
                         <User className="w-4 h-4" />
                         <span>Basic Information</span>
                       </h4>
-                      <div className="grid grid-cols-2 gap-2 text-sm text-gray-800">
-                        <div className="text-gray-800"><strong className="text-gray-900">Name:</strong> <span className="text-gray-700">{selectedMemberData.name || 'Not provided'}</span></div>
-                        <div className="text-gray-800"><strong className="text-gray-900">Age:</strong> <span className="text-gray-700">{selectedMemberData.age ? `${selectedMemberData.age} years` : 'Not provided'}</span></div>
+                      <div className="grid grid-cols-2 gap-2 text-sm text-gray-800 dark:text-gray-200">
+                        <div><strong className="text-gray-900 dark:text-white">Name:</strong> <span className="text-gray-700 dark:text-gray-300">{selectedMemberData.name || 'Not provided'}</span></div>
+                        <div><strong className="text-gray-900 dark:text-white">Age:</strong> <span className="text-gray-700 dark:text-gray-300">{selectedMemberData.age ? `${selectedMemberData.age} years` : 'Not provided'}</span></div>
                         {selectedMemberData.gender ? (
-                          <div className="text-gray-800"><strong className="text-gray-900">Gender:</strong> <span className="text-gray-700">{selectedMemberData.gender}</span></div>
+                          <div><strong className="text-gray-900 dark:text-white">Gender:</strong> <span className="text-gray-700 dark:text-gray-300">{selectedMemberData.gender}</span></div>
                         ) : (
-                          <div className="text-gray-800"><strong className="text-gray-900">Gender:</strong> <span className="text-gray-500">Not specified</span></div>
+                          <div><strong className="text-gray-900 dark:text-white">Gender:</strong> <span className="text-gray-500 dark:text-gray-400">Not specified</span></div>
                         )}
                         {selectedEmergencyData ? (
-                          <div className="text-gray-800"><strong className="text-gray-900">Blood Type:</strong> <span className="text-gray-700">{selectedEmergencyData.bloodType && selectedEmergencyData.bloodType !== 'Unknown' ? selectedEmergencyData.bloodType : 'Not specified'}</span></div>
+                          <div><strong className="text-gray-900 dark:text-white">Blood Type:</strong> <span className="text-gray-700 dark:text-gray-300">{selectedEmergencyData.bloodType && selectedEmergencyData.bloodType !== 'Unknown' ? selectedEmergencyData.bloodType : 'Not specified'}</span></div>
                         ) : (
-                          <div className="text-gray-800"><strong className="text-gray-900">Blood Type:</strong> <span className="text-gray-500">Not specified</span></div>
+                          <div><strong className="text-gray-900 dark:text-white">Blood Type:</strong> <span className="text-gray-500 dark:text-gray-400">Not specified</span></div>
                         )}
                         {selectedMemberData.height ? (
-                          <div className="text-gray-800"><strong className="text-gray-900">Height:</strong> <span className="text-gray-700">{selectedMemberData.height} cm</span></div>
+                          <div><strong className="text-gray-900 dark:text-white">Height:</strong> <span className="text-gray-700 dark:text-gray-300">{selectedMemberData.height} cm</span></div>
                         ) : null}
                         {selectedMemberData.weight ? (
-                          <div className="text-gray-800"><strong className="text-gray-900">Weight:</strong> <span className="text-gray-700">{selectedMemberData.weight} kg</span></div>
+                          <div><strong className="text-gray-900 dark:text-white">Weight:</strong> <span className="text-gray-700 dark:text-gray-300">{selectedMemberData.weight} kg</span></div>
                         ) : null}
-                        <div className="text-gray-800"><strong className="text-gray-900">Relationship:</strong> <span className="text-gray-700">{selectedMemberData.relationship || 'Not specified'}</span></div>
+                        <div><strong className="text-gray-900 dark:text-white">Relationship:</strong> <span className="text-gray-700 dark:text-gray-300">{selectedMemberData.relationship || 'Not specified'}</span></div>
                         {selectedEmergencyData && selectedEmergencyData.medicalConditions && selectedEmergencyData.medicalConditions.length > 0 ? (
-                          <div className="col-span-2 text-gray-800">
-                            <strong className="text-gray-900">Medical Conditions:</strong> <span className="text-gray-700">{selectedEmergencyData.medicalConditions.length} condition{selectedEmergencyData.medicalConditions.length !== 1 ? 's' : ''}</span>
+                          <div className="col-span-2 text-gray-800 dark:text-gray-200">
+                            <strong className="text-gray-900 dark:text-white">Medical Conditions:</strong> <span className="text-gray-700 dark:text-gray-300">{selectedEmergencyData.medicalConditions.length} condition{selectedEmergencyData.medicalConditions.length !== 1 ? 's' : ''}</span>
                             {selectedEmergencyData.allergies && selectedEmergencyData.allergies.length > 0 && (
-                              <span className="ml-2 text-orange-600">• {selectedEmergencyData.allergies.length} known allerg{selectedEmergencyData.allergies.length !== 1 ? 'ies' : 'y'}</span>
+                              <span className="ml-2 text-orange-600 dark:text-orange-400">• {selectedEmergencyData.allergies.length} known allerg{selectedEmergencyData.allergies.length !== 1 ? 'ies' : 'y'}</span>
                             )}
                           </div>
                         ) : (
-                          <div className="col-span-2 text-gray-800"><strong className="text-gray-900">Medical Conditions:</strong> <span className="text-gray-500">0 conditions</span></div>
+                          <div className="col-span-2 text-gray-800 dark:text-gray-200"><strong className="text-gray-900 dark:text-white">Medical Conditions:</strong> <span className="text-gray-500 dark:text-gray-400">0 conditions</span></div>
                         )}
                         {selectedEmergencyData && selectedEmergencyData.medications && selectedEmergencyData.medications.length > 0 ? (
-                          <div className="col-span-2 text-gray-800">
-                            <strong className="text-gray-900">Active Medications:</strong> <span className="text-gray-700">{selectedEmergencyData.medications.length} medication{selectedEmergencyData.medications.length !== 1 ? 's' : ''}</span>
+                          <div className="col-span-2 text-gray-800 dark:text-gray-200">
+                            <strong className="text-gray-900 dark:text-white">Active Medications:</strong> <span className="text-gray-700 dark:text-gray-300">{selectedEmergencyData.medications.length} medication{selectedEmergencyData.medications.length !== 1 ? 's' : ''}</span>
                           </div>
                         ) : (
-                          <div className="col-span-2 text-gray-800"><strong className="text-gray-900">Active Medications:</strong> <span className="text-gray-500">0 medications</span></div>
+                          <div className="col-span-2 text-gray-800 dark:text-gray-200"><strong className="text-gray-900 dark:text-white">Active Medications:</strong> <span className="text-gray-500 dark:text-gray-400">0 medications</span></div>
                         )}
                         {selectedMemberData.phone ? (
-                          <div className="text-gray-800"><strong className="text-gray-900">Phone:</strong> <span className="text-gray-700">{selectedMemberData.phone}</span></div>
+                          <div className="text-gray-800 dark:text-gray-200"><strong className="text-gray-900 dark:text-white">Phone:</strong> <span className="text-gray-700 dark:text-gray-300">{selectedMemberData.phone}</span></div>
                         ) : null}
                         {selectedMemberData.email ? (
-                          <div className="text-gray-800"><strong className="text-gray-900">Email:</strong> <span className="text-gray-700">{selectedMemberData.email}</span></div>
+                          <div className="text-gray-800 dark:text-gray-200"><strong className="text-gray-900 dark:text-white">Email:</strong> <span className="text-gray-700 dark:text-gray-300">{selectedMemberData.email}</span></div>
                         ) : null}
                         {selectedMemberData.address ? (
-                          <div className="col-span-2 text-gray-800"><strong className="text-gray-900">Address:</strong> <span className="text-gray-700">{selectedMemberData.address}</span></div>
+                          <div className="col-span-2 text-gray-800 dark:text-gray-200"><strong className="text-gray-900 dark:text-white">Address:</strong> <span className="text-gray-700 dark:text-gray-300">{selectedMemberData.address}</span></div>
                         ) : null}
                       </div>
                     </div>
 
                     {/* Medical Conditions */}
                     {selectedEmergencyData && selectedEmergencyData.medicalConditions && selectedEmergencyData.medicalConditions.length > 0 && (
-                      <div className="bg-red-50 rounded-xl p-4">
-                        <h4 className="font-semibold text-red-900 mb-2 flex items-center space-x-2">
+                      <div className="bg-red-50 dark:bg-red-900/20 rounded-xl p-4">
+                        <h4 className="font-semibold text-red-900 dark:text-red-300 mb-2 flex items-center space-x-2">
                           <Heart className="w-4 h-4" />
                           <span>Medical Conditions</span>
                         </h4>
                         <div className="flex flex-wrap gap-2">
                           {selectedEmergencyData.medicalConditions.map((condition, index) => (
-                            <span key={index} className="px-3 py-1 bg-red-100 text-red-800 rounded-full text-sm">
+                            <span key={index} className="px-3 py-1 bg-red-100 dark:bg-red-900/40 text-red-800 dark:text-red-200 rounded-full text-sm">
                               {condition}
                             </span>
                           ))}
@@ -743,8 +743,8 @@ export default function EmergencyID() {
 
                     {/* Allergies */}
                     {selectedEmergencyData && selectedEmergencyData.allergies && selectedEmergencyData.allergies.length > 0 && (
-                      <div className="bg-orange-50 rounded-xl p-4">
-                        <h4 className="font-semibold text-orange-900 mb-2 flex items-center space-x-2">
+                      <div className="bg-orange-50 dark:bg-orange-900/20 rounded-xl p-4">
+                        <h4 className="font-semibold text-orange-900 dark:text-orange-300 mb-2 flex items-center space-x-2">
                           <AlertTriangle className="w-4 h-4" />
                           <span>Allergies</span>
                         </h4>
@@ -759,12 +759,12 @@ export default function EmergencyID() {
                     )}
 
                     {/* Medications - Always show this section */}
-                    <div className="bg-blue-50 rounded-xl p-4">
-                      <h4 className="font-semibold text-blue-900 mb-2 flex items-center space-x-2">
+                    <div className="bg-blue-50 dark:bg-blue-900/20 rounded-xl p-4">
+                      <h4 className="font-semibold text-blue-900 dark:text-blue-300 mb-2 flex items-center space-x-2">
                         <Pill className="w-4 h-4" />
                         <span>Current Medications</span>
                         {selectedEmergencyData && selectedEmergencyData.medications && selectedEmergencyData.medications.length > 0 && (
-                          <span className="ml-2 px-2 py-0.5 bg-blue-200 text-blue-800 rounded-full text-xs font-medium">
+                          <span className="ml-2 px-2 py-0.5 bg-blue-200 dark:bg-blue-900/40 text-blue-800 dark:text-blue-200 rounded-full text-xs font-medium">
                             {selectedEmergencyData.medications.length}
                           </span>
                         )}
@@ -772,10 +772,10 @@ export default function EmergencyID() {
                       {selectedEmergencyData && selectedEmergencyData.medications && selectedEmergencyData.medications.length > 0 ? (
                         <div className="space-y-2">
                           {selectedEmergencyData.medications.map((medication, index) => (
-                            <div key={index} className="flex items-start space-x-2 p-2 bg-white rounded-lg border border-blue-200">
-                              <Pill className="w-4 h-4 text-blue-600 mt-0.5 flex-shrink-0" />
+                            <div key={index} className="flex items-start space-x-2 p-2 bg-white dark:bg-gray-800 rounded-lg border border-blue-200 dark:border-blue-800">
+                              <Pill className="w-4 h-4 text-blue-600 dark:text-blue-400 mt-0.5 flex-shrink-0" />
                               <div className="flex-1">
-                                <div className="text-sm font-medium text-blue-900">
+                                <div className="text-sm font-medium text-blue-900 dark:text-blue-200">
                                   {medication}
                                 </div>
                               </div>
@@ -783,19 +783,19 @@ export default function EmergencyID() {
                           ))}
                         </div>
                       ) : (
-                        <div className="text-sm text-blue-700 italic py-2">
+                        <div className="text-sm text-blue-700 dark:text-blue-300 italic py-2">
                           No active medications recorded for {selectedMemberData.name}
                         </div>
                       )}
                     </div>
 
                     {/* Emergency Contacts */}
-                    <div className="bg-green-50 rounded-xl p-4">
-                      <h4 className="font-semibold text-green-900 mb-2 flex items-center space-x-2">
+                    <div className="bg-green-50 dark:bg-green-900/20 rounded-xl p-4">
+                      <h4 className="font-semibold text-green-900 dark:text-green-300 mb-2 flex items-center space-x-2">
                         <Phone className="w-4 h-4" />
                         <span>Emergency Contacts</span>
                         {selectedEmergencyData && selectedEmergencyData.emergencyContacts && selectedEmergencyData.emergencyContacts.length > 0 && (
-                          <span className="ml-2 px-2 py-0.5 bg-green-200 text-green-800 rounded-full text-xs font-medium">
+                          <span className="ml-2 px-2 py-0.5 bg-green-200 dark:bg-green-900/40 text-green-800 dark:text-green-200 rounded-full text-xs font-medium">
                             {selectedEmergencyData.emergencyContacts.length}
                           </span>
                         )}
@@ -803,9 +803,9 @@ export default function EmergencyID() {
                       {selectedEmergencyData && selectedEmergencyData.emergencyContacts && selectedEmergencyData.emergencyContacts.length > 0 ? (
                         <div className="space-y-2">
                           {selectedEmergencyData.emergencyContacts.map((contact: any, index: number) => (
-                            <div key={index} className="flex items-center justify-between p-2 bg-white rounded-lg border border-green-200">
+                            <div key={index} className="flex items-center justify-between p-2 bg-white dark:bg-gray-800 rounded-lg border border-green-200 dark:border-green-800">
                               <div className="flex-1">
-                                <div className="font-medium text-green-900 flex items-center space-x-2">
+                                <div className="font-medium text-green-900 dark:text-green-200 flex items-center space-x-2">
                                   {contact.name}
                                   {contact.isPrimary && (
                                     <span className="px-1.5 py-0.5 bg-green-200 text-green-800 rounded text-xs">Primary</span>

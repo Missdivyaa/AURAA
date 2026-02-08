@@ -404,11 +404,11 @@ export default function SmartInsights() {
 
   const getPriorityColor = (priority: string) => {
     switch (priority) {
-      case 'urgent': return 'bg-red-100 text-red-800 border-red-200'
-      case 'high': return 'bg-orange-100 text-orange-800 border-orange-200'
-      case 'medium': return 'bg-yellow-100 text-yellow-800 border-yellow-200'
-      case 'low': return 'bg-green-100 text-green-800 border-green-200'
-      default: return 'bg-gray-100 text-gray-800 border-gray-200'
+      case 'urgent': return 'bg-red-100 dark:bg-red-900/40 text-red-800 dark:text-red-100 border-red-200 dark:border-red-800'
+      case 'high': return 'bg-orange-100 dark:bg-orange-900/40 text-orange-800 dark:text-orange-100 border-orange-200 dark:border-orange-800'
+      case 'medium': return 'bg-yellow-100 dark:bg-yellow-900/40 text-yellow-800 dark:text-yellow-100 border-yellow-200 dark:border-yellow-800'
+      case 'low': return 'bg-green-100 dark:bg-green-900/40 text-green-800 dark:text-green-100 border-green-200 dark:border-green-800'
+      default: return 'bg-gray-100 dark:bg-gray-800 text-gray-800 dark:text-gray-200 border-gray-200 dark:border-gray-700'
     }
   }
 
@@ -423,25 +423,25 @@ export default function SmartInsights() {
 
   const getTrendColor = (trend: string, significance: string) => {
     if (trend === 'up') {
-      return significance === 'good' ? 'text-green-600' : 'text-red-600'
+      return significance === 'good' ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'
     } else if (trend === 'down') {
-      return significance === 'good' ? 'text-green-600' : 'text-red-600'
+      return significance === 'good' ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'
     }
-    return 'text-gray-600'
+    return 'text-gray-600 dark:text-gray-400'
   }
 
   if (isLoading) {
     return (
-      <div className="bg-white rounded-3xl p-8 shadow-xl">
+      <div className="bg-white dark:bg-gray-800 rounded-3xl p-8 shadow-xl">
         <div className="flex items-center space-x-3 mb-6">
-          <Brain className="w-8 h-8 text-blue-600 animate-pulse" />
-          <h3 className="text-2xl font-bold text-gray-900">Smart Insights</h3>
+          <Brain className="w-8 h-8 text-blue-600 dark:text-blue-400 animate-pulse" />
+          <h3 className="text-2xl font-bold text-gray-900 dark:text-white">Smart Insights</h3>
         </div>
         <div className="space-y-4">
           {[1, 2, 3].map((i) => (
             <div key={i} className="animate-pulse">
-              <div className="h-4 bg-gray-200 rounded w-3/4 mb-2"></div>
-              <div className="h-3 bg-gray-200 rounded w-1/2"></div>
+              <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded w-3/4 mb-2"></div>
+              <div className="h-3 bg-gray-200 dark:bg-gray-700 rounded w-1/2"></div>
             </div>
           ))}
         </div>
@@ -467,11 +467,11 @@ export default function SmartInsights() {
   return (
     <div className="space-y-8">
       {/* Smart Insights */}
-      <div className="bg-white rounded-3xl p-8 shadow-xl">
+      <div className="bg-white dark:bg-gray-800 rounded-3xl p-8 shadow-xl">
         <div className="flex items-center justify-between mb-6">
           <div className="flex items-center space-x-3">
-            <Brain className="w-6 h-6 text-blue-600" />
-            <h3 className="text-xl font-bold text-gray-900">Smart Insights</h3>
+            <Brain className="w-6 h-6 text-blue-600 dark:text-blue-400" />
+            <h3 className="text-xl font-bold text-gray-900 dark:text-white">Smart Insights</h3>
           </div>
           <div className="flex items-center space-x-4">
             <button
@@ -500,8 +500,8 @@ export default function SmartInsights() {
           </div>
         ) : insights.length === 0 ? (
           <div className="text-center py-12">
-            <Brain className="w-16 h-16 mx-auto mb-4 text-gray-300" />
-            <p className="text-gray-500 mb-4">No insights available yet</p>
+            <Brain className="w-16 h-16 mx-auto mb-4 text-gray-300 dark:text-gray-600" />
+            <p className="text-gray-500 dark:text-gray-400 mb-4">No insights available yet</p>
             <button
               onClick={handleRefresh}
               disabled={isGenerating}
@@ -524,22 +524,22 @@ export default function SmartInsights() {
                 >
                   <div className="flex items-start space-x-4">
                     <div className="flex-shrink-0">
-                      <Icon className="w-6 h-6" />
+                      <Icon className="w-6 h-6 dark:text-gray-300" />
                     </div>
                     <div className="flex-1">
                       <div className="flex items-center justify-between mb-2">
-                        <h4 className="font-semibold text-base">{insight.title}</h4>
+                        <h4 className="font-semibold text-base dark:text-white">{insight.title}</h4>
                         <div className="flex items-center space-x-2">
                           {insight.actionTaken && (
-                            <CheckCircle className="w-4 h-4 text-green-600" />
+                            <CheckCircle className="w-4 h-4 text-green-600 dark:text-green-400" />
                           )}
-                          <span className="text-xs font-medium px-2 py-1 rounded-full bg-white/50">
+                          <span className="text-xs font-medium px-2 py-1 rounded-full bg-white/50 dark:bg-gray-700/50">
                             {Math.round(insight.confidence * 100)}%
                           </span>
                         </div>
                       </div>
-                      <p className="text-sm mb-2">{insight.description}</p>
-                      <div className="flex items-center justify-between text-xs">
+                      <p className="text-sm mb-2 text-gray-700 dark:text-gray-200">{insight.description}</p>
+                      <div className="flex items-center justify-between text-xs text-gray-600 dark:text-gray-300">
                         <div className="flex items-center space-x-4">
                           <span className="flex items-center space-x-1">
                             <Users className="w-3 h-3" />
@@ -550,7 +550,7 @@ export default function SmartInsights() {
                             <span>{insight.timestamp}</span>
                           </span>
                         </div>
-                        <span className="px-2 py-1 rounded-full bg-white/50">
+                        <span className="px-2 py-1 rounded-full bg-white/50 dark:bg-gray-700/50 text-gray-700 dark:text-gray-300">
                           {insight.category}
                         </span>
                       </div>
@@ -565,10 +565,10 @@ export default function SmartInsights() {
 
       {/* Health Trends */}
       {trends.length > 0 && (
-        <div className="bg-white rounded-3xl p-8 shadow-xl">
+        <div className="bg-white dark:bg-gray-800 rounded-3xl p-8 shadow-xl">
           <div className="flex items-center space-x-3 mb-6">
-            <Activity className="w-6 h-6 text-green-600" />
-            <h3 className="text-xl font-bold text-gray-900">Health Trends</h3>
+            <Activity className="w-6 h-6 text-green-600 dark:text-green-400" />
+            <h3 className="text-xl font-bold text-gray-900 dark:text-white">Health Trends</h3>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -584,10 +584,10 @@ export default function SmartInsights() {
                   initial={{ opacity: 0, scale: 0.9 }}
                   animate={{ opacity: 1, scale: 1 }}
                   transition={{ delay: index * 0.1 }}
-                  className="p-6 rounded-2xl border border-gray-200 hover:border-gray-300 transition-colors"
+                  className="p-6 rounded-2xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-700/50 hover:border-gray-300 dark:hover:border-gray-600 transition-colors"
                 >
                   <div className="flex items-center justify-between mb-4">
-                    <h4 className="font-semibold text-base text-gray-900">{trend.metric}</h4>
+                    <h4 className="font-semibold text-base text-gray-900 dark:text-white">{trend.metric}</h4>
                     <div className={`flex items-center space-x-1 ${trendColor}`}>
                       <TrendIcon className="w-4 h-4" />
                       {changePercent !== 0 && (
@@ -600,22 +600,22 @@ export default function SmartInsights() {
                   
                   <div className="space-y-2">
                     <div className="flex items-center justify-between">
-                      <span className="text-xl font-bold text-gray-900">
+                      <span className="text-xl font-bold text-gray-900 dark:text-white">
                         {trend.current} {trend.unit}
                       </span>
                       {trend.previous > 0 && (
-                        <span className="text-sm text-gray-500">
+                        <span className="text-sm text-gray-500 dark:text-gray-400">
                           vs {trend.previous} {trend.unit}
                         </span>
                       )}
                     </div>
                     
                     <div className="flex items-center space-x-2">
-                      <div className="flex-1 h-2 bg-gray-200 rounded-full overflow-hidden">
+                      <div className="flex-1 h-2 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
                         <div 
                           className={`h-full transition-all duration-1000 ${
-                            trend.significance === 'good' ? 'bg-green-500' : 
-                            trend.significance === 'concerning' ? 'bg-red-500' : 'bg-blue-500'
+                            trend.significance === 'good' ? 'bg-green-500 dark:bg-green-400' : 
+                            trend.significance === 'concerning' ? 'bg-red-500 dark:bg-red-400' : 'bg-blue-500 dark:bg-blue-400'
                           }`}
                           style={{ 
                             width: `${trend.unit === '%' 
@@ -626,8 +626,8 @@ export default function SmartInsights() {
                         />
                       </div>
                       <span className={`text-xs font-medium ${
-                        trend.significance === 'good' ? 'text-green-600' :
-                        trend.significance === 'concerning' ? 'text-red-600' : 'text-gray-600'
+                        trend.significance === 'good' ? 'text-green-600 dark:text-green-400' :
+                        trend.significance === 'concerning' ? 'text-red-600 dark:text-red-400' : 'text-gray-600 dark:text-gray-400'
                       }`}>
                         {trend.significance}
                       </span>
@@ -641,47 +641,47 @@ export default function SmartInsights() {
       )}
 
       {/* AI Actions Summary */}
-      <div className="bg-gradient-to-br from-blue-50 to-purple-50 rounded-3xl p-8 border border-blue-200">
+      <div className="bg-gradient-to-br from-blue-50 to-purple-50 dark:from-gray-800 dark:to-gray-800 rounded-3xl p-8 border border-blue-200 dark:border-gray-700">
         <div className="flex items-center space-x-3 mb-6">
-          <Shield className="w-6 h-6 text-blue-600" />
-          <h3 className="text-xl font-bold text-gray-900">AI Actions Summary</h3>
+          <Shield className="w-6 h-6 text-blue-600 dark:text-blue-400" />
+          <h3 className="text-xl font-bold text-gray-900 dark:text-white">AI Actions Summary</h3>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           <div className="text-center">
-            <div className="w-16 h-16 bg-blue-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
-              <Pill className="w-8 h-8 text-blue-600" />
+            <div className="w-16 h-16 bg-blue-100 dark:bg-blue-900/30 rounded-2xl flex items-center justify-center mx-auto mb-4">
+              <Pill className="w-8 h-8 text-blue-600 dark:text-blue-400" />
             </div>
-            <h4 className="font-bold text-base text-gray-900 mb-2">Medications</h4>
-            <p className="text-2xl font-bold text-blue-600 mb-1">
+            <h4 className="font-bold text-base text-gray-900 dark:text-white mb-2">Medications</h4>
+            <p className="text-2xl font-bold text-blue-600 dark:text-blue-400 mb-1">
               {trends.find(t => t.metric === 'Active Medications')?.current || 0}
             </p>
-            <p className="text-sm text-gray-600">Active medications</p>
+            <p className="text-sm text-gray-600 dark:text-gray-400">Active medications</p>
           </div>
 
           <div className="text-center">
-            <div className="w-16 h-16 bg-green-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
-              <Calendar className="w-8 h-8 text-green-600" />
+            <div className="w-16 h-16 bg-green-100 dark:bg-green-900/30 rounded-2xl flex items-center justify-center mx-auto mb-4">
+              <Calendar className="w-8 h-8 text-green-600 dark:text-green-400" />
             </div>
-            <h4 className="font-bold text-base text-gray-900 mb-2">Appointments</h4>
-            <p className="text-2xl font-bold text-green-600 mb-1">
+            <h4 className="font-bold text-base text-gray-900 dark:text-white mb-2">Appointments</h4>
+            <p className="text-2xl font-bold text-green-600 dark:text-green-400 mb-1">
               {trends.find(t => t.metric === 'Upcoming Appointments')?.current || 0}
             </p>
-            <p className="text-sm text-gray-600">Upcoming appointments</p>
+            <p className="text-sm text-gray-600 dark:text-gray-400">Upcoming appointments</p>
           </div>
 
           <div className="text-center">
-            <div className="w-16 h-16 bg-purple-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
-              <Star className="w-8 h-8 text-purple-600" />
+            <div className="w-16 h-16 bg-purple-100 dark:bg-purple-900/30 rounded-2xl flex items-center justify-center mx-auto mb-4">
+              <Star className="w-8 h-8 text-purple-600 dark:text-purple-400" />
             </div>
-            <h4 className="font-bold text-base text-gray-900 mb-2">Insights</h4>
-            <p className="text-2xl font-bold text-purple-600 mb-1">{insights.length}</p>
-            <p className="text-sm text-gray-600">AI-generated insights</p>
+            <h4 className="font-bold text-base text-gray-900 dark:text-white mb-2">Insights</h4>
+            <p className="text-2xl font-bold text-purple-600 dark:text-purple-400 mb-1">{insights.length}</p>
+            <p className="text-sm text-gray-600 dark:text-gray-400">AI-generated insights</p>
           </div>
         </div>
 
-        <div className="mt-6 p-4 bg-white/50 rounded-xl">
-          <p className="text-blue-800 text-sm text-center">
+        <div className="mt-6 p-4 bg-white/50 dark:bg-gray-700/50 rounded-xl">
+          <p className="text-blue-800 dark:text-blue-300 text-sm text-center">
             <strong>🤖 AI is working 24/7</strong> to analyze your health data, create reminders, 
             schedule appointments, and provide personalized recommendations based on your real health information.
           </p>

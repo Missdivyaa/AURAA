@@ -389,10 +389,10 @@ export default function UserDashboard() {
   // Show loading state while checking authentication
   if (!isLoaded) {
     return (
-      <main className="min-h-screen bg-gradient-to-br from-gray-50 to-blue-50 flex items-center justify-center">
+      <main className="min-h-screen bg-gradient-to-br from-gray-50 to-blue-50 dark:from-gray-900 dark:to-gray-800 flex items-center justify-center">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600 mx-auto mb-4"></div>
-          <p className="text-gray-600">Loading your dashboard...</p>
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600 dark:border-primary-400 mx-auto mb-4"></div>
+          <p className="text-gray-600 dark:text-gray-400">Loading your dashboard...</p>
         </div>
       </main>
     )
@@ -413,7 +413,7 @@ export default function UserDashboard() {
   ]
 
   return (
-    <main className="min-h-screen bg-gradient-to-br from-gray-50 to-blue-50 pb-8">
+    <main className="min-h-screen bg-gradient-to-br from-gray-50 to-blue-50 dark:from-gray-900 dark:to-gray-800 pb-8">
       <Navigation />
       
       <div className="pt-20 px-4 sm:px-6 lg:px-8">
@@ -427,10 +427,10 @@ export default function UserDashboard() {
           >
             <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between">
               <div>
-                <h1 className="text-3xl lg:text-4xl font-bold text-gray-900 mb-2">
+                <h1 className="text-3xl lg:text-4xl font-bold text-gray-900 dark:text-white mb-2">
                   Welcome back, {user.firstName || 'User'}!
                 </h1>
-                <p className="text-lg text-gray-600">
+                <p className="text-lg text-gray-600 dark:text-gray-400">
                   Manage your family's health records and stay on top of appointments
                 </p>
               </div>
@@ -459,7 +459,7 @@ export default function UserDashboard() {
             transition={{ duration: 0.6, delay: 0.1 }}
             className="mb-8"
           >
-            <div className="flex space-x-1 bg-white rounded-xl p-1 shadow-sm">
+            <div className="flex space-x-1 bg-white dark:bg-gray-800 rounded-xl p-1 shadow-sm">
               {tabs.map((tab) => {
                 const Icon = tab.icon
                 return (
@@ -555,16 +555,16 @@ export default function UserDashboard() {
                   initial={{ opacity: 0, scale: 0.9 }}
                   animate={{ opacity: 1, scale: 1 }}
                   transition={{ duration: 0.6, delay: 0.3 }}
-                  className="bg-white rounded-2xl p-8 shadow-lg hover:shadow-xl transition-all duration-300 card-hover border-2 border-dashed border-gray-300 hover:border-primary-500 group cursor-pointer"
+                  className="bg-white dark:bg-gray-800 rounded-2xl p-8 shadow-lg hover:shadow-xl transition-all duration-300 card-hover border-2 border-dashed border-gray-300 dark:border-gray-700 hover:border-primary-500 dark:hover:border-primary-400 group cursor-pointer"
                 >
                   <div className="flex flex-col items-center justify-center h-full min-h-[300px] text-center">
-                    <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mb-4 group-hover:bg-primary-100 transition-colors">
-                      <Plus className="w-8 h-8 text-gray-400 group-hover:text-primary-600" />
+                    <div className="w-16 h-16 bg-gray-100 dark:bg-gray-700 rounded-full flex items-center justify-center mb-4 group-hover:bg-primary-100 dark:group-hover:bg-primary-900/30 transition-colors">
+                      <Plus className="w-8 h-8 text-gray-400 dark:text-gray-500 group-hover:text-primary-600 dark:group-hover:text-primary-400" />
                     </div>
-                    <h3 className="text-lg font-semibold text-gray-900 mb-2">
+                    <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">
                       Add Family Member
                     </h3>
-                    <p className="text-gray-600 text-sm">
+                    <p className="text-gray-600 dark:text-gray-400 text-sm">
                       Add a new family member to manage their health records
                     </p>
                   </div>
@@ -592,8 +592,8 @@ export default function UserDashboard() {
               transition={{ duration: 0.6, delay: 0.2 }}
               className="space-y-8"
             >
-              <div className="bg-white rounded-2xl p-8 shadow-lg">
-                <h2 className="text-2xl font-bold text-gray-900 mb-6">Upcoming Appointments</h2>
+              <div className="bg-white dark:bg-gray-800 rounded-2xl p-8 shadow-lg">
+                <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-6">Upcoming Appointments</h2>
                 <div className="space-y-4">
                   {members.filter(member => member.nextAppointment && member.nextAppointment.trim() !== '').length > 0 ? (
                     members

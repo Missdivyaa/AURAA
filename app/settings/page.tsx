@@ -92,6 +92,8 @@ export default function Settings() {
   const [saving, setSaving] = useState(false)
   const [imagePreview, setImagePreview] = useState<string>('')
   const [imageFile, setImageFile] = useState<File | null>(null)
+  const [countryCode, setCountryCode] = useState<string>('+91')
+  const [phoneNumber, setPhoneNumber] = useState<string>('')
   
   // Profile state
   const [profile, setProfile] = useState({
@@ -100,6 +102,30 @@ export default function Settings() {
     phone: '',
     profileImage: ''
   })
+
+  // Common country codes
+  const countryCodes = [
+    { code: '+91', country: 'India', flag: '🇮🇳' },
+    { code: '+1', country: 'USA/Canada', flag: '🇺🇸' },
+    { code: '+44', country: 'UK', flag: '🇬🇧' },
+    { code: '+61', country: 'Australia', flag: '🇦🇺' },
+    { code: '+81', country: 'Japan', flag: '🇯🇵' },
+    { code: '+971', country: 'UAE', flag: '🇦🇪' },
+    { code: '+86', country: 'China', flag: '🇨🇳' },
+    { code: '+33', country: 'France', flag: '🇫🇷' },
+    { code: '+49', country: 'Germany', flag: '🇩🇪' },
+    { code: '+7', country: 'Russia', flag: '🇷🇺' },
+    { code: '+82', country: 'South Korea', flag: '🇰🇷' },
+    { code: '+65', country: 'Singapore', flag: '🇸🇬' },
+    { code: '+60', country: 'Malaysia', flag: '🇲🇾' },
+    { code: '+66', country: 'Thailand', flag: '🇹🇭' },
+    { code: '+84', country: 'Vietnam', flag: '🇻🇳' },
+    { code: '+62', country: 'Indonesia', flag: '🇮🇩' },
+    { code: '+92', country: 'Pakistan', flag: '🇵🇰' },
+    { code: '+880', country: 'Bangladesh', flag: '🇧🇩' },
+    { code: '+94', country: 'Sri Lanka', flag: '🇱🇰' },
+    { code: '+977', country: 'Nepal', flag: '🇳🇵' },
+  ]
 
   // Preferences state
   const [notifications, setNotifications] = useState({
@@ -127,6 +153,24 @@ export default function Settings() {
     { id: 'appearance', name: 'Appearance', icon: Palette },
     { id: 'data', name: 'Data', icon: Database },
   ]
+
+  // Helper function to parse phone number and extract country code
+  const parsePhoneNumber = (phone: string): { countryCode: string; number: string } => {
+    if (!phone) return { countryCode: '+91', number: '' }
+    
+    // Check if phone starts with a country code
+    for (const country of countryCodes) {
+      if (phone.startsWith(country.code)) {
+        return {
+          countryCode: country.code,
+          number: phone.substring(country.code.length).trim()
+        }
+      }
+    }
+    
+    // If no country code found, default to +91
+    return { countryCode: '+91', number: phone.trim() }
+  }
 
   // Load user data and preferences
   useEffect(() => {
@@ -156,13 +200,19 @@ export default function Settings() {
           }
 
           const phoneNumber = selfPhoneNumber || userProfile.phone || ''
+          // Parse phone number to extract country code
+          const parsedPhone = parsePhoneNumber(phoneNumber)
+          setCountryCode(parsedPhone.countryCode)
+          setPhoneNumber(parsedPhone.number)
+          // Use profileImage from context (respects empty string if removed)
+          const profileImage = userProfile.profileImage || ''
           setProfile({
             name: userProfile.name,
             email: userProfile.email,
             phone: phoneNumber,
-            profileImage: userProfile.profileImage
+            profileImage: profileImage
           })
-          setImagePreview(userProfile.profileImage)
+          setImagePreview(profileImage)
         } else {
           // Load user profile from backend
           const profileData = await graphqlRequest(GET_USER_PROFILE, {}, token)
@@ -186,7 +236,15 @@ export default function Settings() {
           if (profileData?.me) {
             const userData = profileData.me
             const phoneNumber = selfPhoneNumber || userData.phone || user.primaryPhoneNumber?.phoneNumber || ''
-            const profileImage = userData.profileImage || user.imageUrl || ''
+            // Use profileImage from backend if it exists (even if empty string), otherwise fallback to Clerk
+            // Check if profileImage property exists in the response (not just if it's truthy)
+            const profileImage = userData.hasOwnProperty('profileImage') 
+              ? userData.profileImage 
+              : (user.imageUrl || '')
+            // Parse phone number to extract country code
+            const parsedPhone = parsePhoneNumber(phoneNumber)
+            setCountryCode(parsedPhone.countryCode)
+            setPhoneNumber(parsedPhone.number)
             
             setProfile({
               name: userData.name || user.firstName || user.fullName || '',
@@ -199,6 +257,10 @@ export default function Settings() {
             // Fallback to Clerk data if backend doesn't have it
             const phoneNumber = selfPhoneNumber || user.primaryPhoneNumber?.phoneNumber || ''
             const profileImage = user.imageUrl || ''
+            // Parse phone number to extract country code
+            const parsedPhone = parsePhoneNumber(phoneNumber)
+            setCountryCode(parsedPhone.countryCode)
+            setPhoneNumber(parsedPhone.number)
             
             setProfile({
               name: user.fullName || user.firstName || '',
@@ -235,11 +297,18 @@ export default function Settings() {
         toast.error('Failed to load user data')
         // Fallback to Clerk data
         if (user) {
-          const profileImage = user.imageUrl || ''
+          // Don't use Clerk imageUrl as fallback if user explicitly removed image
+          const profileImage = ''
+          const phoneNumber = user.primaryPhoneNumber?.phoneNumber || ''
+          // Parse phone number to extract country code
+          const parsedPhone = parsePhoneNumber(phoneNumber)
+          setCountryCode(parsedPhone.countryCode)
+          setPhoneNumber(parsedPhone.number)
+          
           setProfile({
             name: user.fullName || user.firstName || '',
             email: user.primaryEmailAddress?.emailAddress || '',
-            phone: user.primaryPhoneNumber?.phoneNumber || '',
+            phone: phoneNumber,
             profileImage: profileImage
           })
           setImagePreview(profileImage)
@@ -264,21 +333,47 @@ export default function Settings() {
 
       // Save profile if on profile tab
       if (activeTab === 'profile') {
-        // If there's an image file, upload it first
-        let imageUrl = profile.profileImage
-        if (imageFile) {
-          // For now, we'll use the image preview URL
-          // In production, you'd upload to a storage service (S3, Cloudinary, etc.)
-          imageUrl = imagePreview
+        // Validate name
+        if (!profile.name || profile.name.trim().length === 0) {
+          toast.error('Name is required')
+          setSaving(false)
+          return
         }
+
+        // Validate phone number - must be exactly 10 digits (excluding country code)
+        const phoneDigits = phoneNumber.replace(/\D/g, '') // Remove all non-digits
+        if (phoneNumber && phoneDigits.length !== 10) {
+          toast.error('Phone number must be exactly 10 digits')
+          setSaving(false)
+          return
+        }
+
+        // Handle profile image
+        // If imagePreview is empty, explicitly set to empty string to remove image
+        // If there's a new imageFile, use the preview (base64 data URL)
+        // Otherwise, keep the existing profileImage
+        let imageUrl = ''
+        if (imagePreview) {
+          // If there's a preview, use it (either new upload or existing)
+          imageUrl = imagePreview
+        } else {
+          // If preview is empty, explicitly set to empty string to remove image
+          imageUrl = ''
+        }
+        
+        // Combine country code and phone number
+        const fullPhone = phoneDigits ? `${countryCode} ${phoneDigits}`.trim() : ''
         
         await graphqlRequest(UPDATE_USER_PROFILE, {
           input: {
-            name: profile.name,
-            phone: profile.phone,
+            name: profile.name.trim(),
+            phone: fullPhone,
             profileImage: imageUrl
           }
         }, token)
+        
+        // Update profile state with full phone
+        setProfile({ ...profile, phone: fullPhone })
         
         // Update Self family member phone number if it exists
         try {
@@ -287,7 +382,9 @@ export default function Settings() {
             const selfMember = familyData.familyMembers.find((member: any) => 
               member.relationship?.toLowerCase() === 'self'
             )
-            if (selfMember && profile.phone) {
+            if (selfMember) {
+              const phoneDigits = phoneNumber.replace(/\D/g, '')
+              const fullPhone = phoneDigits ? `${countryCode} ${phoneDigits}`.trim() : ''
               const UPDATE_FAMILY_MEMBER = `
                 mutation UpdateFamilyMember($id: ID!, $input: UpdateFamilyMemberInput!) {
                   updateFamilyMember(id: $id, input: $input) {
@@ -298,7 +395,7 @@ export default function Settings() {
               `
               await graphqlRequest(UPDATE_FAMILY_MEMBER, {
                 id: selfMember.id,
-                input: { phone: profile.phone }
+                input: { phone: fullPhone }
               }, token)
             }
           }
@@ -452,14 +549,32 @@ export default function Settings() {
                       </div>
                       <div>
                         <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Phone</label>
-                        <input
-                          type="tel"
-                          value={profile.phone}
-                          onChange={(e) => setProfile({ ...profile, phone: e.target.value })}
-                          placeholder="+1 (555) 123-4567"
-                          className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-primary-500 dark:focus:ring-primary-400"
-                        />
-                        <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">Phone number from Emergency ID (Self)</p>
+                        <div className="flex gap-2">
+                          <select
+                            value={countryCode}
+                            onChange={(e) => setCountryCode(e.target.value)}
+                            className="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-primary-500 dark:focus:ring-primary-400 min-w-[100px]"
+                          >
+                            {countryCodes.map((country) => (
+                              <option key={country.code} value={country.code}>
+                                {country.flag} {country.code}
+                              </option>
+                            ))}
+                          </select>
+                          <input
+                            type="tel"
+                            value={phoneNumber}
+                            onChange={(e) => {
+                              // Only allow digits and spaces, limit to 10 digits
+                              const value = e.target.value.replace(/\D/g, '').slice(0, 10)
+                              setPhoneNumber(value)
+                            }}
+                            placeholder="9876543210"
+                            maxLength={10}
+                            className="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-primary-500 dark:focus:ring-primary-400"
+                          />
+                        </div>
+                        <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">Phone number must be exactly 10 digits</p>
                       </div>
                     </div>
 
@@ -485,11 +600,35 @@ export default function Settings() {
                           {imagePreview && (
                             <button
                               onClick={() => {
+                                // Clear image preview and profile image
                                 setImagePreview('')
                                 setProfile({ ...profile, profileImage: '' })
                                 setImageFile(null)
+                                // Immediately save the removal to backend
+                                const saveImageRemoval = async () => {
+                                  try {
+                                    const token = await getToken()
+                                    if (token) {
+                                      await graphqlRequest(UPDATE_USER_PROFILE, {
+                                        input: {
+                                          name: profile.name,
+                                          phone: profile.phone,
+                                          profileImage: '' // Explicitly set to empty string
+                                        }
+                                      }, token)
+                                      // Refresh profile context to update everywhere
+                                      await refreshProfile()
+                                      toast.success('Profile image removed')
+                                    }
+                                  } catch (error) {
+                                    console.error('Error removing profile image:', error)
+                                    toast.error('Failed to remove profile image')
+                                  }
+                                }
+                                saveImageRemoval()
                               }}
-                              className="absolute -top-2 -right-2 w-6 h-6 bg-red-500 text-white rounded-full flex items-center justify-center hover:bg-red-600 transition-colors"
+                              className="absolute -top-2 -right-2 w-6 h-6 bg-red-500 text-white rounded-full flex items-center justify-center hover:bg-red-600 transition-colors z-10"
+                              title="Remove profile image"
                             >
                               <X className="w-4 h-4" />
                             </button>
@@ -606,9 +745,22 @@ export default function Settings() {
                           {(['light', 'dark', 'auto'] as const).map((themeOption) => (
                             <button
                               key={themeOption}
-                              onClick={() => {
+                              onClick={async () => {
                                 setTheme(themeOption)
-                                setThemeGlobal(themeOption)
+                                await setThemeGlobal(themeOption)
+                                // Save immediately to backend
+                                try {
+                                  const token = await getToken()
+                                  if (token) {
+                                    await graphqlRequest(UPDATE_USER_PREFERENCES, {
+                                      preferences: {
+                                        appearance: { theme: themeOption }
+                                      }
+                                    }, token)
+                                  }
+                                } catch (error) {
+                                  console.error('Failed to save theme:', error)
+                                }
                               }}
                               className={`px-4 py-2 rounded-lg font-medium transition-colors ${
                                 theme === themeOption

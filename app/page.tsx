@@ -34,10 +34,10 @@ export default function HomePage() {
   // Show loading state while checking authentication
   if (!isLoaded) {
     return (
-      <main className="min-h-screen bg-gradient-to-br from-gray-50 to-blue-50 flex items-center justify-center">
+      <main className="min-h-screen bg-gradient-to-br from-gray-50 to-blue-50 dark:from-gray-900 dark:to-gray-800 flex items-center justify-center">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600 mx-auto mb-4"></div>
-          <p className="text-gray-600">Loading AURAA...</p>
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600 dark:border-primary-400 mx-auto mb-4"></div>
+          <p className="text-gray-600 dark:text-gray-400">Loading AURAA...</p>
         </div>
       </main>
     )
@@ -46,10 +46,10 @@ export default function HomePage() {
   // Show redirecting state
   if (isRedirecting) {
     return (
-      <main className="min-h-screen bg-gradient-to-br from-gray-50 to-blue-50 flex items-center justify-center">
+      <main className="min-h-screen bg-gradient-to-br from-gray-50 to-blue-50 dark:from-gray-900 dark:to-gray-800 flex items-center justify-center">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600 mx-auto mb-4"></div>
-          <p className="text-gray-600">Welcome back! Redirecting to your dashboard...</p>
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600 dark:border-primary-400 mx-auto mb-4"></div>
+          <p className="text-gray-600 dark:text-gray-400">Welcome back! Redirecting to your dashboard...</p>
         </div>
       </main>
     )
@@ -57,7 +57,7 @@ export default function HomePage() {
 
   // Show public homepage for non-authenticated users
   return (
-    <main className="min-h-screen bg-gradient-to-br from-gray-50 to-blue-50 pb-8">
+    <main className="min-h-screen bg-gradient-to-br from-gray-50 to-blue-50 dark:from-gray-900 dark:to-gray-800 pb-8">
       <Navigation />
       
       <motion.div

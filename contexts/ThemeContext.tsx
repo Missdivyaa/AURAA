@@ -1,6 +1,8 @@
 'use client'
 
 import { createContext, useContext, useEffect, useState } from 'react'
+import { useUser, useAuth } from '@clerk/nextjs'
+import { graphqlRequest } from '@/lib/graphql-client'
 
 type Theme = 'light' | 'dark' | 'auto'
 
@@ -12,17 +14,81 @@ interface ThemeContextType {
 
 const ThemeContext = createContext<ThemeContextType | undefined>(undefined)
 
+const GET_USER_PREFERENCES = `
+  query GetUserPreferences {
+    userPreferences
+  }
+`
+
+const UPDATE_USER_PREFERENCES = `
+  mutation UpdateUserPreferences($preferences: JSON!) {
+    updateUserPreferences(preferences: $preferences) {
+      id
+      preferences
+    }
+  }
+`
+
 export function ThemeProvider({ children, initialTheme }: { children: React.ReactNode, initialTheme?: Theme }) {
+  const { user, isLoaded: userLoaded } = useUser()
+  const { getToken } = useAuth()
   const [theme, setThemeState] = useState<Theme>(initialTheme || 'light')
   const [resolvedTheme, setResolvedTheme] = useState<'light' | 'dark'>('light')
+  const [isLoadingTheme, setIsLoadingTheme] = useState(true)
 
+  // Load theme from backend preferences first, then localStorage as fallback
   useEffect(() => {
-    // Load theme from localStorage or use initialTheme
-    const savedTheme = localStorage.getItem('theme') as Theme | null
-    if (savedTheme) {
-      setThemeState(savedTheme)
+    const loadTheme = async () => {
+      // First, try to load from localStorage immediately (for instant UI)
+      const localTheme = localStorage.getItem('theme') as Theme | null
+      if (localTheme) {
+        setThemeState(localTheme)
+        // Apply theme immediately
+        const root = window.document.documentElement
+        root.classList.remove('light', 'dark')
+        if (localTheme === 'auto') {
+          const systemPrefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches
+          root.classList.add(systemPrefersDark ? 'dark' : 'light')
+          setResolvedTheme(systemPrefersDark ? 'dark' : 'light')
+        } else {
+          root.classList.add(localTheme)
+          setResolvedTheme(localTheme)
+        }
+      }
+
+      // Then, if user is logged in, load from backend and override localStorage
+      if (userLoaded && user) {
+        try {
+          const token = await getToken()
+          if (token) {
+            const preferencesData = await graphqlRequest(GET_USER_PREFERENCES, {}, token)
+            if (preferencesData?.userPreferences?.appearance?.theme) {
+              const backendTheme = preferencesData.userPreferences.appearance.theme as Theme
+              setThemeState(backendTheme)
+              // Sync localStorage with backend
+              localStorage.setItem('theme', backendTheme)
+              // Apply theme immediately
+              const root = window.document.documentElement
+              root.classList.remove('light', 'dark')
+              if (backendTheme === 'auto') {
+                const systemPrefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches
+                root.classList.add(systemPrefersDark ? 'dark' : 'light')
+                setResolvedTheme(systemPrefersDark ? 'dark' : 'light')
+              } else {
+                root.classList.add(backendTheme)
+                setResolvedTheme(backendTheme)
+              }
+            }
+          }
+        } catch (error) {
+          console.log('Could not load theme from backend, using localStorage')
+        }
+      }
+      setIsLoadingTheme(false)
     }
-  }, [])
+
+    loadTheme()
+  }, [userLoaded, user, getToken])
 
   useEffect(() => {
     const root = window.document.documentElement
@@ -65,8 +131,27 @@ export function ThemeProvider({ children, initialTheme }: { children: React.Reac
     return () => mediaQuery.removeEventListener('change', handleChange)
   }, [theme])
 
-  const setTheme = (newTheme: Theme) => {
+  const setTheme = async (newTheme: Theme) => {
     setThemeState(newTheme)
+    // Save to localStorage immediately
+    localStorage.setItem('theme', newTheme)
+    
+    // Save to backend if user is logged in
+    if (userLoaded && user) {
+      try {
+        const token = await getToken()
+        if (token) {
+          await graphqlRequest(UPDATE_USER_PREFERENCES, {
+            preferences: {
+              appearance: { theme: newTheme }
+            }
+          }, token)
+        }
+      } catch (error) {
+        console.error('Failed to save theme to backend:', error)
+        // Theme is still saved to localStorage, so it will persist
+      }
+    }
   }
 
   return (
