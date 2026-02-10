@@ -1022,7 +1022,7 @@ export default function EmergencyID() {
                   {isAddMode ? (
                     hasValidPrimary ? (
                       <div className="mb-4 p-3 bg-blue-50 rounded-lg border border-blue-200">
-                        <label className="text-xs font-medium text-blue-900 mb-2 block">Primary Contact (Your Contact)</label>
+                        <label className="text-xs font-medium text-blue-900 mb-2 block">Primary Contact</label>
                         <div className="p-3 bg-white rounded-lg border border-blue-200">
                           <div className="font-medium text-gray-900">{primaryContact.name}</div>
                           <div className="text-sm text-gray-600">{extractPhone(primaryContact.phone).display}</div>
@@ -1031,7 +1031,7 @@ export default function EmergencyID() {
                       </div>
                     ) : (
                       <div className="mb-4 p-3 bg-blue-50 rounded-lg border border-blue-200">
-                        <label className="text-xs font-medium text-blue-900 mb-2 block">Primary Contact (Your Contact)</label>
+                        <label className="text-xs font-medium text-blue-900 mb-2 block">Primary Contact</label>
                         <div className="space-y-2">
                           <input
                             type="text"
@@ -1168,7 +1168,7 @@ export default function EmergencyID() {
                   )}
                   
                   {/* Relative Contact - In add mode, only show input fields for adding new relative */}
-                  <div className="mb-4 p-3 bg-green-50 rounded-lg border border-green-200">
+                  <div className="mb-4 p-3 bg-green-50 rounded-lg border border-green-200 overflow-hidden break-words w-full max-w-full box-border">
                     <label className="text-xs font-medium text-green-900 mb-2 block">
                       {isAddMode ? 'Add New Relative Contact' : 'Relative Contact (To Inform Relatives)'}
                     </label>
@@ -1198,10 +1198,10 @@ export default function EmergencyID() {
                         </button>
                       </div>
                     ) : (
-                      <div className="space-y-2">
+                      <div className="space-y-2 overflow-hidden w-full max-w-full box-border">
                         <input
                           type="text"
-                          className="w-full px-3 py-2 border rounded-lg text-gray-900 text-sm"
+                          className="w-full min-w-0 max-w-full px-3 py-2 border rounded-lg text-gray-900 text-sm box-border"
                           placeholder="Relative name"
                           value={contactForm.relativeContactName}
                           onChange={e => setContactForm({...contactForm, relativeContactName: e.target.value})}
@@ -1214,20 +1214,20 @@ export default function EmergencyID() {
                         />
                         <input
                           type="text"
-                          className="w-full px-3 py-2 border rounded-lg text-gray-900 text-sm"
+                          className="w-full min-w-0 max-w-full px-3 py-2 border rounded-lg text-gray-900 text-sm box-border"
                           placeholder="Relationship (e.g., Spouse, Parent)"
                           value={contactForm.relativeContactRelation}
                           onChange={e => setContactForm({...contactForm, relativeContactRelation: e.target.value})}
                           onFocus={(e) => {
-                            if (e.target.value === 'Not provided' || e.target.value === 'Please add contact' || e.target.value.toLowerCase().includes('not')) {
-                              e.target.value = ''
+                            // Clear default text when focused
+                            if (e.target.value === 'Family Member' || e.target.value === 'Not provided' || e.target.value === 'Please add contact' || e.target.value.toLowerCase().includes('not')) {
                               setContactForm({...contactForm, relativeContactRelation: ''})
                             }
                           }}
                         />
-                        <div className="flex gap-2">
+                        <div className="flex gap-2 min-w-0 max-w-full box-border w-full">
                           <select
-                            className="w-20 px-2 py-2 border rounded-lg bg-white text-gray-900 text-sm"
+                            className="w-20 flex-shrink-0 px-2 py-2 border rounded-lg bg-white text-gray-900 text-sm box-border"
                             value={contactForm.relativeContactCountryCode}
                             onChange={e => setContactForm({ ...contactForm, relativeContactCountryCode: e.target.value })}
                           >
@@ -1237,7 +1237,7 @@ export default function EmergencyID() {
                           </select>
                           <input
                             type="tel"
-                            className="flex-1 px-3 py-2 border rounded-lg text-gray-900 text-sm"
+                            className="flex-1 min-w-0 max-w-full px-3 py-2 border rounded-lg text-gray-900 text-sm box-border"
                             placeholder="Relative phone"
                             value={contactForm.relativeContactPhone}
                             onChange={e => {

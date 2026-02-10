@@ -86,7 +86,7 @@ export default function Settings() {
   const { user, isLoaded: userLoaded } = useUser()
   const { getToken } = useAuth()
   const { theme: currentTheme, setTheme: setThemeGlobal } = useTheme()
-  const { profile: userProfile, refreshProfile } = useUserProfile()
+  const { profile: userProfile, refreshProfile, updateProfileImage } = useUserProfile()
   const [activeTab, setActiveTab] = useState('profile')
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -94,6 +94,7 @@ export default function Settings() {
   const [imageFile, setImageFile] = useState<File | null>(null)
   const [countryCode, setCountryCode] = useState<string>('+91')
   const [phoneNumber, setPhoneNumber] = useState<string>('')
+  const [isSavingProfile, setIsSavingProfile] = useState(false) // Flag to prevent reload after save
   
   // Profile state
   const [profile, setProfile] = useState({
@@ -174,7 +175,7 @@ export default function Settings() {
 
   // Load user data and preferences
   useEffect(() => {
-    if (!userLoaded || !user) return
+    if (!userLoaded || !user || isSavingProfile) return // Don't reload while saving
 
     const loadUserData = async () => {
       try {
@@ -204,15 +205,20 @@ export default function Settings() {
           const parsedPhone = parsePhoneNumber(phoneNumber)
           setCountryCode(parsedPhone.countryCode)
           setPhoneNumber(parsedPhone.number)
-          // Use profileImage from context (respects empty string if removed)
-          const profileImage = userProfile.profileImage || ''
+          // Use profileImage from context - check if it exists as a property (even if empty string)
+          const profileImage = userProfile.hasOwnProperty('profileImage') 
+            ? (userProfile.profileImage || '') 
+            : ''
           setProfile({
             name: userProfile.name,
             email: userProfile.email,
             phone: phoneNumber,
             profileImage: profileImage
           })
-          setImagePreview(profileImage)
+          // Only update imagePreview if we're not currently saving (to prevent overwriting during save)
+          if (!isSavingProfile) {
+            setImagePreview(profileImage)
+          }
         } else {
           // Load user profile from backend
           const profileData = await graphqlRequest(GET_USER_PROFILE, {}, token)
@@ -236,10 +242,10 @@ export default function Settings() {
           if (profileData?.me) {
             const userData = profileData.me
             const phoneNumber = selfPhoneNumber || userData.phone || user.primaryPhoneNumber?.phoneNumber || ''
-            // Use profileImage from backend if it exists (even if empty string), otherwise fallback to Clerk
+            // Use profileImage from backend if property exists (even if empty string), otherwise fallback to Clerk
             // Check if profileImage property exists in the response (not just if it's truthy)
             const profileImage = userData.hasOwnProperty('profileImage') 
-              ? userData.profileImage 
+              ? (userData.profileImage || '') 
               : (user.imageUrl || '')
             // Parse phone number to extract country code
             const parsedPhone = parsePhoneNumber(phoneNumber)
@@ -252,7 +258,10 @@ export default function Settings() {
               phone: phoneNumber,
               profileImage: profileImage
             })
-            setImagePreview(profileImage)
+            // Only update imagePreview if we're not currently saving (to prevent overwriting during save)
+            if (!isSavingProfile) {
+              setImagePreview(profileImage)
+            }
           } else {
             // Fallback to Clerk data if backend doesn't have it
             const phoneNumber = selfPhoneNumber || user.primaryPhoneNumber?.phoneNumber || ''
@@ -268,7 +277,10 @@ export default function Settings() {
               phone: phoneNumber,
               profileImage: profileImage
             })
-            setImagePreview(profileImage)
+            // Only update imagePreview if we're not currently saving
+            if (!isSavingProfile) {
+              setImagePreview(profileImage)
+            }
           }
         }
 
@@ -311,7 +323,10 @@ export default function Settings() {
             phone: phoneNumber,
             profileImage: profileImage
           })
-          setImagePreview(profileImage)
+          // Only update imagePreview if we're not currently saving
+          if (!isSavingProfile) {
+            setImagePreview(profileImage)
+          }
         }
       } finally {
         setLoading(false)
@@ -319,7 +334,7 @@ export default function Settings() {
     }
 
     loadUserData()
-  }, [userLoaded, user, getToken, userProfile])
+  }, [userLoaded, user, getToken, userProfile, isSavingProfile])
 
   const handleSaveSettings = async () => {
     if (!user) {
@@ -333,81 +348,154 @@ export default function Settings() {
 
       // Save profile if on profile tab
       if (activeTab === 'profile') {
-        // Validate name
-        if (!profile.name || profile.name.trim().length === 0) {
-          toast.error('Name is required')
-          setSaving(false)
-          return
-        }
-
-        // Validate phone number - must be exactly 10 digits (excluding country code)
-        const phoneDigits = phoneNumber.replace(/\D/g, '') // Remove all non-digits
-        if (phoneNumber && phoneDigits.length !== 10) {
-          toast.error('Phone number must be exactly 10 digits')
-          setSaving(false)
-          return
-        }
-
-        // Handle profile image
-        // If imagePreview is empty, explicitly set to empty string to remove image
-        // If there's a new imageFile, use the preview (base64 data URL)
-        // Otherwise, keep the existing profileImage
-        let imageUrl = ''
-        if (imagePreview) {
-          // If there's a preview, use it (either new upload or existing)
-          imageUrl = imagePreview
-        } else {
-          // If preview is empty, explicitly set to empty string to remove image
-          imageUrl = ''
-        }
+        // Set flag to prevent useEffect from reloading
+        setIsSavingProfile(true)
         
-        // Combine country code and phone number
-        const fullPhone = phoneDigits ? `${countryCode} ${phoneDigits}`.trim() : ''
-        
-        await graphqlRequest(UPDATE_USER_PROFILE, {
-          input: {
-            name: profile.name.trim(),
-            phone: fullPhone,
-            profileImage: imageUrl
-          }
-        }, token)
-        
-        // Update profile state with full phone
-        setProfile({ ...profile, phone: fullPhone })
-        
-        // Update Self family member phone number if it exists
         try {
-          const familyData = await graphqlRequest(GET_FAMILY_MEMBERS, {}, token)
-          if (familyData?.familyMembers) {
-            const selfMember = familyData.familyMembers.find((member: any) => 
-              member.relationship?.toLowerCase() === 'self'
-            )
-            if (selfMember) {
-              const phoneDigits = phoneNumber.replace(/\D/g, '')
-              const fullPhone = phoneDigits ? `${countryCode} ${phoneDigits}`.trim() : ''
-              const UPDATE_FAMILY_MEMBER = `
-                mutation UpdateFamilyMember($id: ID!, $input: UpdateFamilyMemberInput!) {
-                  updateFamilyMember(id: $id, input: $input) {
-                    id
-                    phone
-                  }
-                }
-              `
-              await graphqlRequest(UPDATE_FAMILY_MEMBER, {
-                id: selfMember.id,
-                input: { phone: fullPhone }
-              }, token)
-            }
+          // Validate name
+          if (!profile.name || profile.name.trim().length === 0) {
+            toast.error('Name is required')
+            setSaving(false)
+            setIsSavingProfile(false)
+            return
           }
-        } catch (err) {
-          console.log('Could not update Self family member phone number')
+
+          // Validate phone number - must be exactly 10 digits (excluding country code)
+          const phoneDigits = phoneNumber.replace(/\D/g, '') // Remove all non-digits
+          if (phoneNumber && phoneDigits.length !== 10) {
+            toast.error('Phone number must be exactly 10 digits')
+            setSaving(false)
+            setIsSavingProfile(false)
+            return
+          }
+
+          // Handle profile image - use imagePreview (contains base64 data URL if uploaded)
+          // IMPORTANT: imagePreview contains the current image (either newly uploaded base64 or existing URL)
+          const imageUrl = imagePreview || ''
+          
+          // Combine country code and phone number
+          const fullPhone = phoneDigits ? `${countryCode} ${phoneDigits}`.trim() : ''
+          
+          console.log('Saving profile with imageUrl:', imageUrl ? `Image present (length: ${imageUrl.length}, starts with: ${imageUrl.substring(0, 30)}...)` : 'No image')
+          
+          // Save profile to backend
+          const updatedProfile = await graphqlRequest(UPDATE_USER_PROFILE, {
+            input: {
+              name: profile.name.trim(),
+              phone: fullPhone,
+              profileImage: imageUrl
+            }
+          }, token)
+          
+          console.log('Backend response:', updatedProfile?.updateUserProfile)
+          console.log('Backend returned profileImage:', updatedProfile?.updateUserProfile?.profileImage ? `Present (${updatedProfile.updateUserProfile.profileImage.substring(0, 30)}...)` : 'Missing or empty')
+          
+          // Determine the final image URL - prioritize backend response, fallback to what we sent
+          let finalImageUrl = imageUrl
+          if (updatedProfile?.updateUserProfile?.profileImage) {
+            // Backend returned an image - use it
+            finalImageUrl = updatedProfile.updateUserProfile.profileImage
+            console.log('Using image from backend response')
+          } else if (imageUrl) {
+            // Backend didn't return image but we sent one - use what we sent
+            finalImageUrl = imageUrl
+            console.log('Using image we sent (backend may not have returned it)')
+          }
+          
+          console.log('Final image URL:', finalImageUrl ? `Present (length: ${finalImageUrl.length})` : 'No image')
+          
+          // CRITICAL: Update local state IMMEDIATELY with the image
+          // This ensures Settings page shows the image right away
+          const updatedName = updatedProfile?.updateUserProfile?.name || profile.name.trim()
+          const updatedPhone = updatedProfile?.updateUserProfile?.phone || fullPhone
+          
+          setProfile({
+            name: updatedName,
+            email: profile.email,
+            phone: updatedPhone,
+            profileImage: finalImageUrl
+          })
+          
+          // CRITICAL: Always update imagePreview to match what we're saving
+          // This ensures the preview shows the saved image immediately
+          setImagePreview(finalImageUrl)
+          console.log('Updated local state and imagePreview')
+          
+          // CRITICAL: Directly update the UserProfileContext immediately
+          // This ensures Navigation updates right away without waiting for refresh
+          if (updateProfileImage) {
+            console.log('Directly updating UserProfileContext with image:', finalImageUrl ? `Present (length: ${finalImageUrl.length})` : 'Empty')
+            updateProfileImage(finalImageUrl || '') // Pass empty string if no image
+          }
+          
+          // Update Self family member phone number if it exists
+          try {
+            const familyData = await graphqlRequest(GET_FAMILY_MEMBERS, {}, token)
+            if (familyData?.familyMembers) {
+              const selfMember = familyData.familyMembers.find((member: any) => 
+                member.relationship?.toLowerCase() === 'self'
+              )
+              if (selfMember) {
+                const phoneDigits = phoneNumber.replace(/\D/g, '')
+                const fullPhone = phoneDigits ? `${countryCode} ${phoneDigits}`.trim() : ''
+                const UPDATE_FAMILY_MEMBER = `
+                  mutation UpdateFamilyMember($id: ID!, $input: UpdateFamilyMemberInput!) {
+                    updateFamilyMember(id: $id, input: $input) {
+                      id
+                      phone
+                    }
+                  }
+                `
+                await graphqlRequest(UPDATE_FAMILY_MEMBER, {
+                  id: selfMember.id,
+                  input: { phone: fullPhone }
+                }, token)
+              }
+            }
+          } catch (err) {
+            console.log('Could not update Self family member phone number')
+          }
+          
+          // Clear file after successful save
+          setImageFile(null)
+          
+          // CRITICAL: Update the profile context IMMEDIATELY with the saved image
+          // This ensures Navigation and other components update right away
+          console.log('Updating profile context with saved image:', finalImageUrl ? 'Image present' : 'No image')
+          
+          // Wait a moment to ensure backend has saved
+          await new Promise(resolve => setTimeout(resolve, 300))
+          
+          // Refresh profile context - this will update Navigation and all components
+          console.log('Step 1: Refreshing profile context...')
+          await refreshProfile()
+          
+          // Wait for context to propagate
+          await new Promise(resolve => setTimeout(resolve, 300))
+          
+          // Force a second refresh to ensure we have the latest data
+          console.log('Step 2: Second refresh to ensure update...')
+          await refreshProfile()
+          
+          // Trigger custom event to force Navigation to update immediately
+          if (typeof window !== 'undefined') {
+            console.log('Step 3: Dispatching profileUpdated event with image:', finalImageUrl ? 'Present' : 'None')
+            window.dispatchEvent(new CustomEvent('profileUpdated', { 
+              detail: { profileImage: finalImageUrl } 
+            }))
+          }
+          
+          toast.success('Profile updated successfully')
+          
+          // Reset flag after allowing time for context to update
+          setTimeout(() => {
+            setIsSavingProfile(false)
+          }, 500)
+        } catch (saveError: any) {
+          console.error('Error saving profile:', saveError)
+          toast.error(saveError.message || 'Failed to save profile')
+          setIsSavingProfile(false)
         }
-        
-        // Refresh profile context
-        await refreshProfile()
-        
-        toast.success('Profile updated successfully')
-        setImageFile(null) // Clear file after saving
       }
 
       // Save preferences
@@ -645,12 +733,28 @@ export default function Settings() {
                               onChange={(e) => {
                                 const file = e.target.files?.[0]
                                 if (file) {
+                                  // Validate file size (5MB max)
+                                  if (file.size > 5 * 1024 * 1024) {
+                                    toast.error('Image size must be less than 5MB')
+                                    return
+                                  }
+                                  
+                                  // Validate file type
+                                  if (!file.type.startsWith('image/')) {
+                                    toast.error('Please select a valid image file')
+                                    return
+                                  }
+                                  
                                   setImageFile(file)
                                   const reader = new FileReader()
                                   reader.onloadend = () => {
                                     const result = reader.result as string
+                                    console.log('Image loaded, size:', result.length, 'bytes')
                                     setImagePreview(result)
                                     setProfile({ ...profile, profileImage: result })
+                                  }
+                                  reader.onerror = () => {
+                                    toast.error('Failed to load image')
                                   }
                                   reader.readAsDataURL(file)
                                 }

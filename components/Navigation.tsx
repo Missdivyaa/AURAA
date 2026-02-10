@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import Link from 'next/link'
 import { motion } from 'framer-motion'
 import { usePathname, useRouter } from 'next/navigation'
@@ -24,15 +24,63 @@ import {
 
 export default function Navigation() {
   const [isOpen, setIsOpen] = useState(false)
+  const [profileImageKey, setProfileImageKey] = useState(0) // Force re-render when image changes
   const pathname = usePathname()
   const router = useRouter()
   const { isSignedIn, user, isLoaded } = useUser()
   const { signOut } = useClerk()
   const { profile: userProfile } = useUserProfile()
   
-  // Use profile image from backend if available, otherwise use Clerk
-  const profileImage = userProfile?.profileImage || user?.imageUrl || ''
+  // Use profile image from backend if it exists and is not empty, otherwise fallback to Clerk
+  // Check if profileImage is a non-empty string (base64 data URL or URL)
+  // Use useMemo to ensure this recalculates when userProfile changes
+  const profileImage = useMemo(() => {
+    const backendImage = userProfile?.profileImage && userProfile.profileImage.trim().length > 0
+      ? userProfile.profileImage
+      : null
+    const image = backendImage || user?.imageUrl || ''
+    return image
+  }, [userProfile?.profileImage, user?.imageUrl]) // Only depend on actual data, not the key
+
   const displayName = userProfile?.name || user?.firstName || user?.emailAddresses[0]?.emailAddress || 'User'
+
+  // Update key when profileImage actually changes (to force img tag re-render)
+  // Use a ref to track previous value and prevent infinite loops
+  const prevProfileImageRef = useRef<string | undefined>(undefined)
+  
+  useEffect(() => {
+    const currentImage = userProfile?.profileImage
+    // Only update if the value actually changed
+    if (currentImage !== prevProfileImageRef.current) {
+      prevProfileImageRef.current = currentImage
+      console.log('Navigation: profileImage changed:', currentImage ? `Present (${currentImage.substring(0, 30)}...)` : 'None')
+      // Update key to force img tag re-render
+      setProfileImageKey(prev => prev + 1)
+    }
+  }, [userProfile?.profileImage]) // Only depend on the actual profileImage value
+  
+  // Listen for custom profile update events to force immediate update
+  useEffect(() => {
+    const handleProfileUpdate = (event: any) => {
+      console.log('Navigation: Received profileUpdated event')
+      if (event.detail?.profileImage) {
+        console.log('Navigation: Event contains image, forcing refresh')
+      }
+      // Force re-render by updating the key
+      setProfileImageKey(prev => prev + 1)
+      // Also force a small delay to ensure context has updated
+      setTimeout(() => {
+        setProfileImageKey(prev => prev + 1)
+      }, 100)
+    }
+    
+    if (typeof window !== 'undefined') {
+      window.addEventListener('profileUpdated', handleProfileUpdate as EventListener)
+      return () => {
+        window.removeEventListener('profileUpdated', handleProfileUpdate as EventListener)
+      }
+    }
+  }, [])
 
   const handleSignOut = async () => {
     try {
@@ -99,9 +147,18 @@ export default function Navigation() {
                 <div className="flex items-center gap-2 px-3 py-2 text-gray-700 dark:text-gray-300">
                   {profileImage ? (
                     <img 
+                      key={`profile-img-${profileImageKey}-${profileImage.substring(0, 20)}`}
                       src={profileImage} 
                       alt={displayName} 
                       className="w-8 h-8 rounded-full object-cover"
+                      onError={(e) => {
+                        // If image fails to load, hide it and show placeholder
+                        console.error('Navigation: Image failed to load:', profileImage.substring(0, 50))
+                        (e.target as HTMLImageElement).style.display = 'none'
+                      }}
+                      onLoad={() => {
+                        console.log('Navigation: Image loaded successfully')
+                      }}
                     />
                   ) : (
                     <div className="w-8 h-8 rounded-full bg-blue-100 dark:bg-blue-900 flex items-center justify-center">
@@ -190,9 +247,21 @@ export default function Navigation() {
                     <div className="flex items-center gap-3 px-4 py-3 text-gray-700 dark:text-gray-300">
                       {profileImage ? (
                         <img 
-                          src={profileImage} 
+                          key={`profile-img-mobile-${profileImageKey}-${profileImage.substring(0, 20)}`}
+                          src={profileImage}
+                          onError={(e) => {
+                            console.error('Navigation Mobile: Image failed to load:', profileImage.substring(0, 50))
+                            (e.target as HTMLImageElement).style.display = 'none'
+                          }}
+                          onLoad={() => {
+                            console.log('Navigation Mobile: Image loaded successfully')
+                          }} 
                           alt={displayName} 
                           className="w-8 h-8 rounded-full object-cover"
+                          onError={(e) => {
+                            // If image fails to load, hide it and show placeholder
+                            (e.target as HTMLImageElement).style.display = 'none'
+                          }}
                         />
                       ) : (
                         <div className="w-8 h-8 rounded-full bg-blue-100 dark:bg-blue-900 flex items-center justify-center">

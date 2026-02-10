@@ -2565,18 +2565,58 @@ Return ONLY valid JSON, no additional text.`;
     updateUserProfile: async (_: any, { input }: { input: any }, { userContext }: { userContext: UserContext }) => {
       if (!userContext) throw new Error('Authentication required');
       
-      return await prisma.user.update({
-        where: { id: userContext.userId },
-        data: input,
-        include: {
-          familyMembers: true,
-          healthReports: true,
-          appointments: true,
-          medications: true,
-          reminders: true,
-          aiInsights: true,
+      try {
+        // Only allow updating specific fields: name, phone, profileImage
+        // Do not allow updating email, clerkId, or other protected fields
+        const updateData: any = {};
+        
+        if (input.name !== undefined && input.name !== null) {
+          updateData.name = input.name.trim();
         }
-      });
+        
+        if (input.phone !== undefined && input.phone !== null) {
+          updateData.phone = input.phone.trim();
+        }
+        
+        if (input.profileImage !== undefined) {
+          // Allow empty string to explicitly remove image, or set the image
+          // Base64 images can be very long, but PostgreSQL TEXT can handle them
+          // Convert null to empty string for consistency
+          updateData.profileImage = input.profileImage === null ? '' : input.profileImage;
+        }
+        
+        console.log('Updating user profile:', {
+          userId: userContext.userId,
+          hasName: !!updateData.name,
+          hasPhone: !!updateData.phone,
+          hasProfileImage: input.profileImage !== undefined,
+          profileImageLength: input.profileImage ? input.profileImage.length : 0
+        });
+        
+        const updatedUser = await prisma.user.update({
+          where: { id: userContext.userId },
+          data: updateData,
+          include: {
+            familyMembers: true,
+            healthReports: true,
+            appointments: true,
+            medications: true,
+            reminders: true,
+            aiInsights: true,
+          }
+        });
+        
+        console.log('User profile updated successfully');
+        return updatedUser;
+      } catch (error: any) {
+        console.error('Error updating user profile:', error);
+        console.error('Error details:', {
+          message: error.message,
+          code: error.code,
+          meta: error.meta
+        });
+        throw new Error(`Failed to update profile: ${error.message}`);
+      }
     },
 
     updateUserPreferences: async (_: any, { preferences }: { preferences: any }, { userContext }: { userContext: UserContext }) => {

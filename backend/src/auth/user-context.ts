@@ -66,18 +66,24 @@ export const getUserContext = async (req: any): Promise<UserContext | null> => {
       }
     } else {
       // Update existing user info if needed
+      // IMPORTANT: Don't update profileImage from Clerk if user has uploaded their own
+      // Only use Clerk's image as fallback when user.profileImage is null/empty
       const needsUpdate = 
         user.email !== clerkUser.email || 
-        user.name !== clerkUser.name ||
-        user.profileImage !== clerkUser.profileImage;
+        user.name !== clerkUser.name;
 
       if (needsUpdate) {
+        // Determine profileImage: use existing if it exists and is not empty, otherwise use Clerk's
+        const profileImageToUse = user.profileImage && user.profileImage.trim().length > 0
+          ? user.profileImage  // Keep user's uploaded image
+          : (clerkUser.profileImage || user.profileImage); // Fallback to Clerk only if user hasn't uploaded
+        
         user = await prisma.user.update({
           where: { id: user.id },
           data: {
             email: clerkUser.email || user.email,
             name: clerkUser.name || user.name,
-            profileImage: clerkUser.profileImage || user.profileImage,
+            profileImage: profileImageToUse,
           }
         });
       }

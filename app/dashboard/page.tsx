@@ -748,7 +748,7 @@ function AddMemberModal({ isOpen, onClose, onSubmit }: { isOpen: boolean, onClos
   ]
 
   const [form, setForm] = useState({
-    name: '', relationship: 'Family Member', avatar: '',
+    name: '', relationship: '', avatar: '',
     dob: '', gender: '', bloodType: '',
     email: '', countryCode: '+91', phone: '', height: '', weight: '',
     lastCheckup: '',
@@ -846,7 +846,18 @@ function AddMemberModal({ isOpen, onClose, onSubmit }: { isOpen: boolean, onClos
             <input className="mt-1 w-full px-3 py-2 border rounded-lg text-gray-900 placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="Name" value={form.name} onChange={e=>setForm({...form, name:e.target.value})} />
           </label>
           <label className="text-sm text-gray-700 md:col-span-2">Relationship
-            <input className="mt-1 w-full px-3 py-2 border rounded-lg text-gray-900 placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="e.g., Self / Spouse / Father" value={form.relationship} onChange={e=>setForm({...form, relationship:e.target.value})} />
+            <input 
+              className="mt-1 w-full px-3 py-2 border rounded-lg text-gray-900 placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500" 
+              placeholder="e.g., Self / Spouse / Father" 
+              value={form.relationship} 
+              onChange={e=>setForm({...form, relationship:e.target.value})}
+              onFocus={(e) => {
+                // Clear the field when focused if it contains default text
+                if (e.target.value === 'Family Member') {
+                  setForm({...form, relationship: ''})
+                }
+              }}
+            />
           </label>
           <label className="text-sm text-gray-700 md:col-span-1">Gender
             <select className="mt-1 w-full px-3 py-2 border rounded-lg text-gray-900 bg-white" value={form.gender} onChange={e=>setForm({...form, gender:e.target.value})}>
@@ -1014,12 +1025,12 @@ function AddMemberModal({ isOpen, onClose, onSubmit }: { isOpen: boolean, onClos
             </div>
             
             {/* Relative Contact */}
-            <div className="p-3 bg-green-50 rounded-lg border border-green-200">
+            <div className="p-3 bg-green-50 rounded-lg border border-green-200 overflow-hidden break-words w-full max-w-full box-border">
               <label className="text-xs font-medium text-green-900 mb-2 block">Relative Contact (To Inform Relatives)</label>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+              <div className="space-y-2 overflow-hidden w-full max-w-full box-border">
                 <input
                   type="text"
-                  className="w-full px-3 py-2 border rounded-lg text-gray-900 text-sm"
+                  className="w-full min-w-0 max-w-full px-3 py-2 border rounded-lg text-gray-900 text-sm box-border"
                   placeholder="Relative name"
                   value={form.relativeContactName}
                   onChange={e => setForm({...form, relativeContactName: e.target.value})}
@@ -1032,20 +1043,20 @@ function AddMemberModal({ isOpen, onClose, onSubmit }: { isOpen: boolean, onClos
                 />
                 <input
                   type="text"
-                  className="w-full px-3 py-2 border rounded-lg text-gray-900 text-sm"
+                  className="w-full min-w-0 max-w-full px-3 py-2 border rounded-lg text-gray-900 text-sm box-border"
                   placeholder="Relationship (e.g., Spouse, Parent)"
                   value={form.relativeContactRelation}
                   onChange={e => setForm({...form, relativeContactRelation: e.target.value})}
                   onFocus={(e) => {
-                    if (e.target.value === 'Not provided' || e.target.value === 'Please add contact' || e.target.value.toLowerCase().includes('not')) {
-                      e.target.value = ''
+                    // Clear default text when focused
+                    if (e.target.value === 'Family Member' || e.target.value === 'Not provided' || e.target.value === 'Please add contact' || e.target.value.toLowerCase().includes('not')) {
                       setForm({...form, relativeContactRelation: ''})
                     }
                   }}
                 />
-                <div className="flex gap-2">
+                <div className="flex gap-2 min-w-0 max-w-full box-border w-full">
                   <select
-                    className="w-20 px-2 py-2 border rounded-lg bg-white text-gray-900 text-sm"
+                    className="w-20 flex-shrink-0 px-2 py-2 border rounded-lg bg-white text-gray-900 text-sm box-border"
                     value={form.relativeContactCountryCode}
                     onChange={e => setForm({ ...form, relativeContactCountryCode: e.target.value })}
                   >
@@ -1055,7 +1066,7 @@ function AddMemberModal({ isOpen, onClose, onSubmit }: { isOpen: boolean, onClos
                   </select>
                   <input
                     type="tel"
-                    className="flex-1 px-3 py-2 border rounded-lg text-gray-900 text-sm"
+                    className="flex-1 min-w-0 max-w-full px-3 py-2 border rounded-lg text-gray-900 text-sm box-border"
                     placeholder="Relative phone"
                     value={form.relativeContactPhone}
                     onChange={e => {
@@ -1095,7 +1106,7 @@ function AddMemberModal({ isOpen, onClose, onSubmit }: { isOpen: boolean, onClos
               
               const member = {
                 name: form.name || 'New Member',
-                relationship: form.relationship || 'Family Member',
+                relationship: form.relationship || '',
                 dob: form.dob,
                 gender: form.gender || '',
                 bloodType: form.bloodType || '',
@@ -1142,7 +1153,7 @@ function AddMemberModal({ isOpen, onClose, onSubmit }: { isOpen: boolean, onClos
                 onClose()
                 // Reset form after successful submission
                 setForm({
-                  name: '', relationship: 'Family Member', avatar: '',
+                  name: '', relationship: '', avatar: '',
                   dob: '', gender: '', bloodType: '',
                   email: '', countryCode: '+91', phone: '', height: '', weight: '',
                   lastCheckup: '',

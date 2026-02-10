@@ -210,6 +210,33 @@ const server = new ApolloServer({
     userContext: req.userContext,
   }),
   introspection: process.env.NODE_ENV !== 'production',
+  formatError: (err) => {
+    // Log the full error for debugging
+    console.error('GraphQL Error:', {
+      message: err.message,
+      locations: err.locations,
+      path: err.path,
+      extensions: err.extensions,
+      originalError: err.originalError
+    });
+    
+    // Return a user-friendly error message
+    return {
+      message: err.message,
+      locations: err.locations,
+      path: err.path,
+      extensions: {
+        ...err.extensions,
+        // Include original error details in development
+        ...(process.env.NODE_ENV === 'development' && err.originalError ? {
+          originalError: {
+            message: err.originalError.message,
+            stack: err.originalError.stack
+          }
+        } : {})
+      }
+    };
+  },
 });
 
 // Apply authentication middleware
