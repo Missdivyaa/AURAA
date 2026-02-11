@@ -131,6 +131,20 @@ const GET_DASHBOARD_STATS = `
   }
 `
 
+const GENERATE_HEALTH_INSIGHTS = `
+  mutation GenerateHealthInsights($memberId: ID) {
+    generateHealthInsights(memberId: $memberId) {
+      id
+      type
+      title
+      description
+      severity
+      category
+      createdAt
+    }
+  }
+`
+
 export default function UserDashboard() {
   const { isSignedIn, user, isLoaded } = useUser()
   const { getToken } = useAuth()
@@ -335,7 +349,11 @@ export default function UserDashboard() {
 
     try {
       const token = await getToken()
-      
+      if (!token) {
+        throw new Error('No authentication token available')
+      }
+
+      // Persist changes to backend
       await graphqlRequest(UPDATE_FAMILY_MEMBER, {
         id: updatedMember.id,
         input: {
@@ -349,13 +367,19 @@ export default function UserDashboard() {
           doctor: updatedMember.doctor || {}
         }
       }, token)
-      
-      // Update the dashboard state
-      setMembers(members.map(member => 
-        member.id === updatedMember.id ? updatedMember : member
-      ))
-      
-      console.log('Saved member:', updatedMember)
+
+      // Reload from backend so all derived fields (age, healthScore, nextAppointment, stats) stay in sync
+      await loadFamilyMembers()
+
+      // Regenerate AI insights for this member so predictions and recommendations stay up to date
+      try {
+        await graphqlRequest(GENERATE_HEALTH_INSIGHTS, { memberId: updatedMember.id }, token)
+        console.log('🤖 Regenerated AI insights after member update:', updatedMember.id)
+      } catch (insightError) {
+        console.error('Error regenerating insights after member update:', insightError)
+      }
+
+      console.log('Saved member and reloaded data:', updatedMember)
     } catch (error) {
       console.error('Error saving member:', error)
       setError('Failed to save member. Please try again.')
@@ -459,14 +483,16 @@ export default function UserDashboard() {
             transition={{ duration: 0.6, delay: 0.1 }}
             className="mb-8"
           >
-            <div className="flex space-x-1 bg-white dark:bg-gray-800 rounded-xl p-1 shadow-sm">
+            <div className="bg-white dark:bg-gray-800 rounded-xl p-1 shadow-sm">
+              {/* On small screens show tabs in a 2x2 grid, on larger screens in a single row */}
+              <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:space-x-1">
               {tabs.map((tab) => {
                 const Icon = tab.icon
                 return (
                   <button
                     key={tab.id}
                     onClick={() => setActiveTab(tab.id)}
-                    className={`flex items-center space-x-2 px-3 py-2 rounded-lg font-medium transition-colors text-sm ${
+                      className={`flex items-center justify-center space-x-2 px-3 py-2 rounded-lg font-medium transition-colors text-sm ${
                       activeTab === tab.id
                         ? 'bg-primary-100 text-primary-700'
                         : 'text-gray-600 hover:text-primary-600 hover:bg-gray-50'
@@ -477,6 +503,7 @@ export default function UserDashboard() {
                   </button>
                 )
               })}
+              </div>
             </div>
           </motion.div>
 
@@ -669,6 +696,9 @@ export default function UserDashboard() {
               console.log('🔄 Dashboard: Creating member:', memberData.name)
               
               const token = await getToken()
+              if (!token) {
+                throw new Error('No authentication token available')
+              }
               
               const newMember = await graphqlRequest(CREATE_FAMILY_MEMBER, {
                 input: {
@@ -691,9 +721,17 @@ export default function UserDashboard() {
               
               console.log('✅ Dashboard: Created member via backend:', newMember.createFamilyMember.name, newMember.createFamilyMember.id)
               
-              // Reload all members from the backend
+              // Reload all members from the backend so every view sees fresh data
               await loadFamilyMembers()
               console.log('📊 Dashboard: Reloaded members list')
+
+              // Regenerate AI insights for this member so predictions/recommendations use real-time data
+              try {
+                await graphqlRequest(GENERATE_HEALTH_INSIGHTS, { memberId: newMember.createFamilyMember.id }, token)
+                console.log('🤖 Regenerated AI insights for new member:', newMember.createFamilyMember.id)
+              } catch (insightError) {
+                console.error('Error regenerating insights for new member:', insightError)
+              }
               
               // Clear any previous errors
               setError(null)

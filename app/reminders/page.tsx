@@ -711,27 +711,30 @@ export default function Reminders() {
             transition={{ duration: 0.6, delay: 0.3 }}
             className="mb-8"
           >
-            <div className="flex space-x-1 bg-white dark:bg-gray-800 rounded-xl p-1 shadow-sm">
-              {tabs.map((tab) => {
-                const Icon = tab.icon
-                return (
-                  <button
-                    key={tab.id}
-                    onClick={() => setActiveTab(tab.id)}
-                    className={`flex items-center space-x-2 px-3 py-2 rounded-lg font-medium transition-colors text-sm ${
-                      activeTab === tab.id
-                        ? 'bg-primary-100 dark:bg-primary-900/50 text-primary-700 dark:text-primary-300'
-                        : 'text-gray-600 dark:text-gray-400 hover:text-primary-600 dark:hover:text-primary-400 hover:bg-gray-50 dark:hover:bg-gray-700'
-                    }`}
-                  >
-                    <Icon className="w-4 h-4" />
-                    <span>{tab.name}</span>
-                    <span className="bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-300 text-xs px-2 py-1 rounded-full">
-                      {tab.count}
-                    </span>
-                  </button>
-                )
-              })}
+            <div className="bg-white dark:bg-gray-800 rounded-xl p-1 shadow-sm">
+              {/* Responsive tabs: 2x2 grid on small screens, single row on larger screens */}
+              <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:space-x-1">
+                {tabs.map((tab) => {
+                  const Icon = tab.icon
+                  return (
+                    <button
+                      key={tab.id}
+                      onClick={() => setActiveTab(tab.id)}
+                      className={`flex items-center justify-center space-x-2 px-3 py-2 rounded-lg font-medium transition-colors text-sm ${
+                        activeTab === tab.id
+                          ? 'bg-primary-100 dark:bg-primary-900/50 text-primary-700 dark:text-primary-300'
+                          : 'text-gray-600 dark:text-gray-400 hover:text-primary-600 dark:hover:text-primary-400 hover:bg-gray-50 dark:hover:bg-gray-700'
+                      }`}
+                    >
+                      <Icon className="w-4 h-4" />
+                      <span>{tab.name}</span>
+                      <span className="bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-300 text-xs px-2 py-1 rounded-full">
+                        {tab.count}
+                      </span>
+                    </button>
+                  )
+                })}
+              </div>
             </div>
           </motion.div>
 

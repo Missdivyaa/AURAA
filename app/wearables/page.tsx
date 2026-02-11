@@ -259,10 +259,11 @@ export default function Wearables() {
             heartRate: Math.floor(Math.random() * 40) + 60,
             steps: Math.floor(Math.random() * 5000) + 5000,
             calories: Math.floor(Math.random() * 200) + 300,
-            sleep: (Math.random() * 2 + 6).toFixed(1)
+            sleep: parseFloat((Math.random() * 2 + 6).toFixed(1))
           }
         },
-        memberId: null
+        memberId: null,
+        syncedAt: new Date().toISOString()
       }
       
       await graphqlRequest(SYNC_WEARABLE_DATA, { input: syncData }, token)
@@ -408,99 +409,127 @@ export default function Wearables() {
               transition={{ duration: 0.6, delay: 0.2 }}
               className="space-y-6"
             >
-              <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {devices.map((device, index) => {
-                  const DeviceIcon = getDeviceIcon(device.type)
-                  
-                  return (
-                    <motion.div
-                      key={device.id}
-                      initial={{ opacity: 0, y: 20 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{ duration: 0.6, delay: index * 0.1 }}
-                      className={`bg-white rounded-2xl p-6 shadow-lg border-l-4 ${getStatusColor(device.status)}`}
+              {devices.length === 0 ? (
+                <div className="bg-white rounded-2xl p-8 shadow-lg flex flex-col items-center text-center">
+                  <Watch className="w-10 h-10 text-primary-600 mb-4" />
+                  <h3 className="text-xl font-semibold text-gray-900 mb-2">No devices connected yet</h3>
+                  <p className="text-gray-600 mb-6 max-w-md">
+                    Connect a smartwatch or fitness tracker to automatically sync your steps, heart rate,
+                    sleep, and other health metrics into your family health dashboard.
+                  </p>
+                  <div className="flex flex-wrap justify-center gap-3">
+                    <button
+                      onClick={() => handleSyncDevice('apple_watch')}
+                      disabled={loading}
+                      className="inline-flex items-center px-5 py-3 bg-primary-600 text-white rounded-xl font-semibold hover:bg-primary-700 transition-colors shadow-md disabled:opacity-50"
                     >
-                      <div className="flex items-start justify-between mb-4">
-                        <div className="flex items-center space-x-3">
-                          <div className="w-12 h-12 bg-primary-100 rounded-xl flex items-center justify-center">
-                            <DeviceIcon className="w-6 h-6 text-primary-600" />
+                      <Plus className="w-4 h-4 mr-2" />
+                      Sync sample device
+                    </button>
+                    <button
+                      disabled
+                      className="inline-flex items-center px-5 py-3 bg-gray-100 text-gray-500 rounded-xl font-medium cursor-not-allowed"
+                    >
+                      <Smartphone className="w-4 h-4 mr-2" />
+                      Google Fit / Apple Health (coming soon)
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+                  {devices.map((device, index) => {
+                    const DeviceIcon = getDeviceIcon(device.type)
+                    
+                    return (
+                      <motion.div
+                        key={device.id}
+                        initial={{ opacity: 0, y: 20 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ duration: 0.6, delay: index * 0.1 }}
+                        className={`bg-white rounded-2xl p-6 shadow-lg border-l-4 ${getStatusColor(device.status)}`}
+                      >
+                        <div className="flex items-start justify-between mb-4">
+                          <div className="flex items-center space-x-3">
+                            <div className="w-12 h-12 bg-primary-100 rounded-xl flex items-center justify-center">
+                              <DeviceIcon className="w-6 h-6 text-primary-600" />
+                            </div>
+                            <div>
+                              <h3 className="text-lg font-semibold text-gray-900">{device.name}</h3>
+                              <p className="text-sm text-gray-500">{device.brand} {device.model}</p>
+                            </div>
                           </div>
-                          <div>
-                            <h3 className="text-lg font-semibold text-gray-900">{device.name}</h3>
-                            <p className="text-sm text-gray-500">{device.brand} {device.model}</p>
+                          <div className="flex items-center space-x-2">
+                            {device.isConnected ? (
+                              <CheckCircle className="w-5 h-5 text-green-500" />
+                            ) : (
+                              <AlertCircle className="w-5 h-5 text-gray-400" />
+                            )}
+                            <button className="p-2 text-gray-400 hover:text-gray-600">
+                              <Settings className="w-4 h-4" />
+                            </button>
                           </div>
                         </div>
-                        <div className="flex items-center space-x-2">
-                          {device.isConnected ? (
-                            <CheckCircle className="w-5 h-5 text-green-500" />
-                          ) : (
-                            <AlertCircle className="w-5 h-5 text-gray-400" />
+
+                        <div className="space-y-3">
+                          <div className="flex items-center justify-between">
+                            <span className="text-sm text-gray-600">Battery</span>
+                            <div className="flex items-center space-x-2">
+                              <Battery className="w-4 h-4 text-gray-400" />
+                              <span className="text-sm font-medium">{device.batteryLevel}%</span>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center justify-between">
+                            <span className="text-sm text-gray-600">Last Sync</span>
+                            <span className="text-sm text-gray-900">
+                              {new Date(device.lastSync).toLocaleDateString()}
+                            </span>
+                          </div>
+
+                          {device.metrics.heartRate && (
+                            <div className="flex items-center justify-between">
+                              <span className="text-sm text-gray-600">Heart Rate</span>
+                              <span className="text-sm font-medium text-red-600">
+                                {device.metrics.heartRate} bpm
+                              </span>
+                            </div>
                           )}
-                          <button className="p-2 text-gray-400 hover:text-gray-600">
-                            <Settings className="w-4 h-4" />
+
+                          {device.metrics.steps && (
+                            <div className="flex items-center justify-between">
+                              <span className="text-sm text-gray-600">Steps Today</span>
+                              <span className="text-sm font-medium text-blue-600">
+                                {device.metrics.steps.toLocaleString()}
+                              </span>
+                            </div>
+                          )}
+
+                          {device.metrics.bloodPressure && (
+                            <div className="flex items-center justify-between">
+                              <span className="text-sm text-gray-600">Blood Pressure</span>
+                              <span className="text-sm font-medium text-purple-600">
+                                {device.metrics.bloodPressure.systolic}/{device.metrics.bloodPressure.diastolic}
+                              </span>
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="mt-4 pt-4 border-t">
+                          <button 
+                            className={`w-full py-2 px-4 rounded-lg text-sm font-medium transition-colors ${
+                              device.isConnected 
+                                ? 'bg-gray-100 text-gray-700 hover:bg-gray-200' 
+                                : 'bg-primary-600 text-white hover:bg-primary-700'
+                            }`}
+                          >
+                            {device.isConnected ? 'Disconnect' : 'Connect'}
                           </button>
                         </div>
-                      </div>
-
-                      <div className="space-y-3">
-                        <div className="flex items-center justify-between">
-                          <span className="text-sm text-gray-600">Battery</span>
-                          <div className="flex items-center space-x-2">
-                            <Battery className="w-4 h-4 text-gray-400" />
-                            <span className="text-sm font-medium">{device.batteryLevel}%</span>
-                          </div>
-                        </div>
-
-                        <div className="flex items-center justify-between">
-                          <span className="text-sm text-gray-600">Last Sync</span>
-                          <span className="text-sm text-gray-900">
-                            {new Date(device.lastSync).toLocaleDateString()}
-                          </span>
-                        </div>
-
-                        {device.metrics.heartRate && (
-                          <div className="flex items-center justify-between">
-                            <span className="text-sm text-gray-600">Heart Rate</span>
-                            <span className="text-sm font-medium text-red-600">
-                              {device.metrics.heartRate} bpm
-                            </span>
-                          </div>
-                        )}
-
-                        {device.metrics.steps && (
-                          <div className="flex items-center justify-between">
-                            <span className="text-sm text-gray-600">Steps Today</span>
-                            <span className="text-sm font-medium text-blue-600">
-                              {device.metrics.steps.toLocaleString()}
-                            </span>
-                          </div>
-                        )}
-
-                        {device.metrics.bloodPressure && (
-                          <div className="flex items-center justify-between">
-                            <span className="text-sm text-gray-600">Blood Pressure</span>
-                            <span className="text-sm font-medium text-purple-600">
-                              {device.metrics.bloodPressure.systolic}/{device.metrics.bloodPressure.diastolic}
-                            </span>
-                          </div>
-                        )}
-                      </div>
-
-                      <div className="mt-4 pt-4 border-t">
-                        <button 
-                          className={`w-full py-2 px-4 rounded-lg text-sm font-medium transition-colors ${
-                            device.isConnected 
-                              ? 'bg-gray-100 text-gray-700 hover:bg-gray-200' 
-                              : 'bg-primary-600 text-white hover:bg-primary-700'
-                          }`}
-                        >
-                          {device.isConnected ? 'Disconnect' : 'Connect'}
-                        </button>
-                      </div>
-                    </motion.div>
-                  )
-                })}
-              </div>
+                      </motion.div>
+                    )
+                  })}
+                </div>
+              )}
             </motion.div>
           )}
 
@@ -512,41 +541,52 @@ export default function Wearables() {
               transition={{ duration: 0.6, delay: 0.2 }}
               className="space-y-6"
             >
-              <div className="grid gap-6">
-                {metrics.map((metric, index) => {
-                  const TrendIcon = getTrendIcon(metric.trend)
-                  
-                  return (
-                    <motion.div
-                      key={metric.id}
-                      initial={{ opacity: 0, y: 20 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{ duration: 0.6, delay: index * 0.1 }}
-                      className="bg-white rounded-2xl p-6 shadow-lg"
-                    >
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center space-x-4">
-                          <div className="w-12 h-12 bg-blue-100 rounded-xl flex items-center justify-center">
-                            <TrendIcon className="w-6 h-6 text-blue-600" />
+              {metrics.length === 0 ? (
+                <div className="bg-white rounded-2xl p-8 shadow-lg text-center">
+                  <Activity className="w-10 h-10 text-primary-600 mb-4 mx-auto" />
+                  <h3 className="text-xl font-semibold text-gray-900 mb-2">No health data yet</h3>
+                  <p className="text-gray-600 max-w-md mx-auto">
+                    Once you connect a wearable device and start syncing, you will see your steps,
+                    heart rate, sleep, and other metrics summarized here.
+                  </p>
+                </div>
+              ) : (
+                <div className="grid gap-6">
+                  {metrics.map((metric, index) => {
+                    const TrendIcon = getTrendIcon(metric.trend)
+                    
+                    return (
+                      <motion.div
+                        key={metric.id}
+                        initial={{ opacity: 0, y: 20 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ duration: 0.6, delay: index * 0.1 }}
+                        className="bg-white rounded-2xl p-6 shadow-lg"
+                      >
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center space-x-4">
+                            <div className="w-12 h-12 bg-blue-100 rounded-xl flex items-center justify-center">
+                              <TrendIcon className="w-6 h-6 text-blue-600" />
+                            </div>
+                            <div>
+                              <h3 className="text-lg font-semibold text-gray-900">{metric.metric}</h3>
+                              <p className="text-sm text-gray-500">{metric.deviceName}</p>
+                            </div>
                           </div>
-                          <div>
-                            <h3 className="text-lg font-semibold text-gray-900">{metric.metric}</h3>
-                            <p className="text-sm text-gray-500">{metric.deviceName}</p>
+                          <div className="text-right">
+                            <div className="text-2xl font-bold text-gray-900">
+                              {metric.value} {metric.unit}
+                            </div>
+                            <div className="text-sm text-gray-500">
+                              {new Date(metric.timestamp).toLocaleString()}
+                            </div>
                           </div>
                         </div>
-                        <div className="text-right">
-                          <div className="text-2xl font-bold text-gray-900">
-                            {metric.value} {metric.unit}
-                          </div>
-                          <div className="text-sm text-gray-500">
-                            {new Date(metric.timestamp).toLocaleString()}
-                          </div>
-                        </div>
-                      </div>
-                    </motion.div>
-                  )
-                })}
-              </div>
+                      </motion.div>
+                    )
+                  })}
+                </div>
+              )}
             </motion.div>
           )}
 
@@ -561,37 +601,57 @@ export default function Wearables() {
               <div className="bg-white rounded-2xl p-6 shadow-lg">
                 <h3 className="text-xl font-semibold text-gray-900 mb-6">Sync Status</h3>
                 
-                <div className="space-y-4">
-                  {devices.map((device, index) => (
-                    <div key={device.id} className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
-                      <div className="flex items-center space-x-3">
-                        <div className="w-10 h-10 bg-primary-100 rounded-lg flex items-center justify-center">
-                          {(() => {
-                            const Icon = getDeviceIcon(device.type)
-                            return <Icon className="w-5 h-5 text-primary-600" />
-                          })()}
+                {devices.length === 0 ? (
+                  <div className="py-6 text-center">
+                    <RefreshCw className="w-8 h-8 text-primary-600 mb-3 mx-auto" />
+                    <p className="text-gray-700 font-medium mb-1">No sync activity yet</p>
+                    <p className="text-sm text-gray-500 mb-4">
+                      Use the Sync Device button above to connect a wearable and start syncing data.
+                    </p>
+                    <button
+                      onClick={() => handleSyncDevice('apple_watch')}
+                      disabled={loading}
+                      className="inline-flex items-center px-4 py-2 bg-primary-600 text-white rounded-lg text-sm font-semibold hover:bg-primary-700 transition-colors disabled:opacity-50"
+                    >
+                      <Plus className="w-4 h-4 mr-2" />
+                      Start first sync
+                    </button>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    {devices.map((device) => (
+                      <div key={device.id} className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
+                        <div className="flex items-center space-x-3">
+                          <div className="w-10 h-10 bg-primary-100 rounded-lg flex items-center justify-center">
+                            {(() => {
+                              const Icon = getDeviceIcon(device.type)
+                              return <Icon className="w-5 h-5 text-primary-600" />
+                            })()}
+                          </div>
+                          <div>
+                            <p className="font-medium text-gray-900">{device.name}</p>
+                            <p className="text-sm text-gray-500">
+                              Last sync: {new Date(device.lastSync).toLocaleString()}
+                            </p>
+                          </div>
                         </div>
-                        <div>
-                          <p className="font-medium text-gray-900">{device.name}</p>
-                          <p className="text-sm text-gray-500">Last sync: {new Date(device.lastSync).toLocaleString()}</p>
+                        <div className="flex items-center space-x-2">
+                          {device.isConnected ? (
+                            <>
+                              <CheckCircle className="w-5 h-5 text-green-500" />
+                              <span className="text-sm text-green-600">Connected</span>
+                            </>
+                          ) : (
+                            <>
+                              <AlertCircle className="w-5 h-5 text-red-500" />
+                              <span className="text-sm text-red-600">Disconnected</span>
+                            </>
+                          )}
                         </div>
                       </div>
-                      <div className="flex items-center space-x-2">
-                        {device.isConnected ? (
-                          <>
-                            <CheckCircle className="w-5 h-5 text-green-500" />
-                            <span className="text-sm text-green-600">Connected</span>
-                          </>
-                        ) : (
-                          <>
-                            <AlertCircle className="w-5 h-5 text-red-500" />
-                            <span className="text-sm text-red-600">Disconnected</span>
-                          </>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </motion.div>
           )}
